@@ -10,8 +10,9 @@ For major changes / additions of new modules, CBE suggests we use the following 
 `git checkout -b branchname`
 Instead of "branchname", use a easily identifiable descriptor. Using slashes is perfectly fine,
 so "adding/power/analysis" might be a good choice for additional work 
-- As you work in that branch, continue to commit, push, and pull like normal. If
-you need to check how code was written in the other branch, use `git checkout` to switch
+- As you work in that branch, continue to commit, push, and pull like normal. The first time you push your branch,
+you'll be given instruction by git on how to add your new branch to Github.
+- Ifyou need to check how code was written in the other branch, use `git checkout` to switch
 between branches. (But make sure to switch back to the branch you're working in before 
 making relevant changes to the code)
 - When the work for this specific change is done, make sure to commit, push, and pull. Then go to

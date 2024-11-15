@@ -1,0 +1,213 @@
+---
+  title: "data_pull"
+author: "Evan Booher"
+format: html
+editor: visual
+---
+
+```{r}
+library("CreelEstimateR")
+library("suncalc")
+library("tidyverse")
+library("patchwork")
+library("gt")
+library("mgcv")
+library("gratia")
+```
+
+
+### From Evan
+
+```{r}
+
+# test out the use of the newly packaged up fetch_dwg function, creating a vector of the names of the Nisqually fisheries we want to pull into R
+
+fisheries <- c("Nisqually salmon 2021", "Nisqually salmon 2022", "Nisqually salmon 2023")
+
+datapull <- set_names(fisheries) |> 
+  map(~fetch_dwg(fishery_name = .x))
+
+interviews <- datapull$`Nisqually salmon 2023`$interview |> 
+  bind_rows(datapull$`Nisqually salmon 2022`$interview, datapull$`Nisqually salmon 2021`$interview)
+
+catch <- datapull$`Nisqually salmon 2023`$catch |> 
+  bind_rows(datapull$`Nisqually salmon 2022`$catch, datapull$`Nisqually salmon 2021`$catch) |>
+  left_join(interviews |> 
+              select(interview_id, event_date, water_body),
+            by = "interview_id") |> 
+  mutate(
+    year = year(event_date),
+    month = month(event_date)
+  )
+
+catch |> 
+  filter(species %in% c("Pink", "Chinook") 
+         & (year == 2021) 
+         & month %in% c(7,8,9,10)) |> 
+  count(year, event_date, species, name = "daily_catch") |> 
+  ggplot(aes(event_date, daily_catch, color = species)) +
+  ggtitle("2021") +
+  geom_point()
+
+catch |> 
+  filter(species %in% c("Pink", "Chinook") 
+         & (year == 2023) 
+         & month %in% c(7,8,9,10)) |> 
+  count(year, event_date, species, name = "daily_catch") |> 
+  ggplot(aes(event_date, daily_catch, color = species)) +
+  ggtitle("2023") +
+  geom_point()
+```
+
+## Collin Modeling
+
+Looking at smoothing splines fit to unmarked chinook and all pink salmon. Can we see
+a difference in phenology? Relative abundance?
+
+### 2023
+
+
+
+```{r}
+
+doy_2md=function(i){
+  ymd=as.Date(i-1, origin="2019-01-01")
+  return(format(ymd, "%b %d"))
+}
+
+dat.2023 = 
+  catch |> 
+  filter(species == "Pink" | species == "Chinook" & fin_mark == "UM") |> 
+   count(year, event_date, species, name = "daily_catch") |> 
+  mutate(doy = yday(event_date),
+         species.fac = as.factor(species))
+
+## smoothing spline using a negative binomial distribution (good for count data)
+out = gam(daily_catch ~ s(doy, by = species.fac),
+           method = "REML", family = "nb",
+          data = dat.2023)
+## plotting the  smooths themselves:
+draw(out)
+
+## checking for issues the smooth flexibility
+gam.check(out)
+
+## looks good
+
+dat.pred = expand_grid(doy = evenly(dat.2023$doy, by = 0.1),
+                     species.fac = unique(dat.2023$species.fac)
+                     )
+dat.pred$daily_catch = predict(out, newdata = dat.pred, type = "response")
+
+ggplot(dat.pred, aes(x = doy, y = daily_catch, col = species.fac))+
+  geom_path()+
+  geom_point(data = dat.2023)+
+    scale_x_continuous(labels = doy_2md)+
+    theme_bw(base_size = 14)+
+  xlab("date")+
+  ggtitle("2023 with smoothing splines")
+
+
+pred.ratio.2023 = dat.pred |> 
+  pivot_wider(names_from = species.fac, 
+              values_from = daily_catch) |> 
+  mutate(proportion.chinook = Chinook / (Chinook + Pink))
+# dat.ratio.2023 = dat.2023 |> 
+#   pivot_wider(names_from = species, 
+#               values_from = daily_catch) |> 
+#   mutate(proportion.chinook = Chinook / (Chinook + Pink))
+ggplot(pred.ratio.2023, aes(x = doy, y = proportion.chinook))+
+  geom_path()+
+  theme_bw(base_size = 14)+
+  scale_x_continuous(labels = doy_2md)+
+    xlab("date")+
+  ggtitle("2023 Proportion of Unmarked chinook")
+
+## estimating uncertainty
+
+# Something with this code, but I'm missing a couple of steps. I'm going to cheat
+# and just use smooth_samples()
+# 
+# br = gam.mh(out, thin = 2, ns = 2000, rw.scale = .4)$bs
+# ## matrix math time!
+# Xp = predict(out, newdata = dat.pred, type = 'lpmatrix')
+# ## normally we would need to drop columns not associated with the smooth, but ALL cols are associated with the smooth)
+# Vb = vcov(out)
+# beta_sim = rmvn(n = 20, coef(out), Vb)
+
+sm_post = smooth_samples(out, "s(doy",
+               n = 20, seed = 42,
+               partial_match = TRUE)
+draw(sm_post)
+
+```
+
+### 2021
+
+```{r}
+dat.2021 = 
+  catch |> 
+  filter(species == "Pink" | species == "Chinook" & fin_mark == "UM") |> 
+   count(year, event_date, species, name = "daily_catch") |> 
+  mutate(doy = yday(event_date),
+         species.fac = as.factor(species))
+
+## smoothing spline using a negative binomial distribution (good for count data)
+out = gam(daily_catch ~ s(doy, by = species.fac),
+           method = "REML", family = "nb",
+          data = dat.2021)
+## plotting the  smooths themselves:
+draw(out)
+
+## checking for issues the smooth flexibility
+gam.check(out)
+
+## looks good
+
+dat.pred = expand_grid(doy = evenly(dat.2021$doy, by = 0.1),
+                     species.fac = unique(dat.2021$species.fac)
+                     )
+dat.pred$daily_catch = predict(out, newdata = dat.pred, type = "response")
+
+ggplot(dat.pred, aes(x = doy, y = daily_catch, col = species.fac))+
+  geom_path()+
+  geom_point(data = dat.2021)+
+    scale_x_continuous(labels = doy_2md)+
+    theme_bw(base_size = 14)+
+  xlab("date")+
+  ggtitle("2021 with smoothing splines")
+
+
+pred.ratio.2021 = dat.pred |> 
+  pivot_wider(names_from = species.fac, 
+              values_from = daily_catch) |> 
+  mutate(proportion.chinook = Chinook / (Chinook + Pink))
+# dat.ratio.2021 = dat.2021 |> 
+#   pivot_wider(names_from = species, 
+#               values_from = daily_catch) |> 
+#   mutate(proportion.chinook = Chinook / (Chinook + Pink))
+ggplot(pred.ratio.2021, aes(x = doy, y = proportion.chinook))+
+  geom_path()+
+  theme_bw(base_size = 14)+
+  scale_x_continuous(labels = doy_2md)+
+    xlab("date")+
+  ggtitle("2021 Proportion of Unmarked chinook")
+
+## estimating uncertainty
+
+# Something with this code, but I'm missing a couple of steps. I'm going to cheat
+# and just use smooth_samples()
+# 
+# br = gam.mh(out, thin = 2, ns = 2000, rw.scale = .4)$bs
+# ## matrix math time!
+# Xp = predict(out, newdata = dat.pred, type = 'lpmatrix')
+# ## normally we would need to drop columns not associated with the smooth, but ALL cols are associated with the smooth)
+# Vb = vcov(out)
+# beta_sim = rmvn(n = 20, coef(out), Vb)
+
+sm_post = smooth_samples(out, "s(doy",
+               n = 20, seed = 42,
+               partial_match = TRUE)
+draw(sm_post)
+
+```

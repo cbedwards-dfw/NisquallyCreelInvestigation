@@ -1,6 +1,6 @@
 ---
-  title: "data_pull"
-author: "Evan Booher"
+title: "data_pull"
+author: "Collin Edwards, Evan Booher, ... "
 format: html
 editor: visual
 ---
@@ -15,21 +15,23 @@ library("mgcv")
 library("gratia")
 ```
 
-
-### From Evan
+### From Evan - test pulling data and plot daily catch of Chinook and pink salmon from creel interviews
 
 ```{r}
 
 # test out the use of the newly packaged up fetch_dwg function, creating a vector of the names of the Nisqually fisheries we want to pull into R
 
+# define fisheries we want data for
 fisheries <- c("Nisqually salmon 2021", "Nisqually salmon 2022", "Nisqually salmon 2023")
 
+# download the data from data.wa.gov
 datapull <- set_names(fisheries) |> 
   map(~fetch_dwg(fishery_name = .x))
 
 interviews <- datapull$`Nisqually salmon 2023`$interview |> 
   bind_rows(datapull$`Nisqually salmon 2022`$interview, datapull$`Nisqually salmon 2021`$interview)
 
+# bind date and waterbody data to the creel interview-based catch records
 catch <- datapull$`Nisqually salmon 2023`$catch |> 
   bind_rows(datapull$`Nisqually salmon 2022`$catch, datapull$`Nisqually salmon 2021`$catch) |>
   left_join(interviews |> 
@@ -40,33 +42,52 @@ catch <- datapull$`Nisqually salmon 2023`$catch |>
     month = month(event_date)
   )
 
+# plot total daily encounters of Chinook and pink salmon for 2021
 catch |> 
   filter(species %in% c("Pink", "Chinook") 
          & (year == 2021) 
          & month %in% c(7,8,9,10)) |> 
-  count(year, event_date, species, name = "daily_catch") |> 
+  group_by(year, event_date, species, fin_mark) |>
+  summarise(daily_catch = sum(fish_count)) |> 
   ggplot(aes(event_date, daily_catch, color = species)) +
   ggtitle("2021") +
   geom_point()
 
+# plot total daily encounters of Chinook and pink salmon for 2023
 catch |> 
   filter(species %in% c("Pink", "Chinook") 
          & (year == 2023) 
          & month %in% c(7,8,9,10)) |> 
-  count(year, event_date, species, name = "daily_catch") |> 
+  group_by(year, event_date, species, fin_mark) |>
+  summarise(daily_catch = sum(fish_count)) |> 
   ggplot(aes(event_date, daily_catch, color = species)) +
   ggtitle("2023") +
   geom_point()
+
+# plot daily encounters of Chinook by fin_mark for 2023
+catch |> 
+  filter(species %in% c("Chinook") 
+         & (year == 2023) 
+         & month %in% c(7,8,9,10)) |> 
+  group_by(year, event_date, species, fin_mark) |>
+  summarise(daily_catch = sum(fish_count)) |> 
+  ggplot(aes(event_date, daily_catch, color = fin_mark)) +
+  ggtitle("2023") +
+  scale_color_brewer(palette="Blues") +
+  theme_bw() +
+  geom_point(size = 3)
+
+
+# next - add tribal net data and compare weekly or other time strata mark rates from net data and creel based interviews 
+
+
 ```
 
 ## Collin Modeling
 
-Looking at smoothing splines fit to unmarked chinook and all pink salmon. Can we see
-a difference in phenology? Relative abundance?
+Looking at smoothing splines fit to unmarked chinook and all pink salmon. Can we see a difference in phenology? Relative abundance?
 
 ### 2023
-
-
 
 ```{r}
 

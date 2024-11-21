@@ -1,6 +1,6 @@
 ---
 title: "data_pull"
-author: "Collin Edwards, Evan Booher, ... "
+author: "Collin Edwards, Evan Booher, Colt Holley, ... "
 format: html
 editor: visual
 ---
@@ -232,3 +232,96 @@ sm_post = smooth_samples(out, "s(doy",
 draw(sm_post)
 
 ```
+
+## Colt - mark rate comparison
+
+Importing tribal net data from cleaned_data/tidy_net_mark_rates.csv. Originally in Excel spreadsheet format (original_data/Net Mark Rate for Creel 2021-2023_021624_DateLineUpFINAL.xlsx), transformed to tidy format in scripts/tidy_net_mark_rates.R, and saved to cleaned_data folder.
+
+```{r}
+data_tribal_net <- readr::read_csv("../cleaned_data/tidy_net_mark_rates.csv")
+
+#format tribal net data
+data_tribal_net <- data_tribal_net |> 
+  dplyr::mutate(
+    fate = dplyr::case_when(
+      fate == "released" ~ "Released",
+      fate == "kept" ~ "Kept",
+      TRUE ~ fate
+    ),
+    fin_mark = dplyr::case_when(
+      fin_mark == "ad" ~ "AD",
+      fin_mark == "um" ~ "UM",
+      TRUE ~ fin_mark
+    )
+  ) |> 
+  dplyr::rename(fish_count = catch)
+
+#filter creel catch data to Chinook
+data_creel_catch_Chinook <- catch |> 
+  dplyr::filter(species == "Chinook",
+                life_stage == "Adult") |> 
+  #format to match tribal net dataframe
+  dplyr::select(fin_mark, fate, fish_count, event_date, year)
+
+#take tribal stat_weeks and parse into dates by year
+#join this with creel data to assign the same time periods to stat weeks
+stat_weeks <- data_tribal_net |> 
+  dplyr::select(year, stat_week, day_interval) |>
+  dplyr::mutate(
+    day_interval = dplyr::case_when(
+      day_interval == "10/33-11/06" ~ "10/31-11/06", #fixing error in dates
+      TRUE ~ day_interval 
+    ),
+    # Extract and parse start and end dates
+    start_date = lubridate::mdy(paste0(sub("-.*", "", day_interval), "/", year)),
+    end_date = lubridate::mdy(paste0(sub(".+-", "", day_interval), "/", year))
+  ) |> 
+  dplyr::select(-day_interval) |> 
+  dplyr::distinct()
+
+#assign stat week to creel data
+data_creel_catch_Chinook <- data_creel_catch_Chinook |> 
+  dplyr::left_join(stat_weeks, by = "year") |> 
+  dplyr::filter(event_date >= start_date & event_date <= end_date) |> 
+  dplyr::select(-start_date, -end_date, -event_date) |> 
+  dplyr::mutate(source = "creel")
+
+#make id col
+data_tribal_net <- data_tribal_net |> 
+  dplyr::mutate(source = "tribal") |> 
+  dplyr::select(-day_interval)
+
+#combine rec creel and tribal net data
+data_combined <- dplyr::bind_rows(data_creel_catch_Chinook, data_tribal_net)
+
+#calculate mark rate
+data_combined <- data_combined |> 
+  dplyr::group_by(source, year, stat_week) |> 
+  dplyr::mutate(
+    total_fish = sum(fish_count, na.rm = TRUE),
+    ad_fish = sum(fish_count[fin_mark == "AD"], na.rm = TRUE),
+    mark_rate = round((total_fish - ad_fish) / total_fish, 2)
+  ) |> 
+  dplyr::filter(!is.na(mark_rate)) |> 
+  dplyr::ungroup()
+
+#plot
+data_combined |> 
+  ggplot2::ggplot(aes(x = stat_week, y = mark_rate, col = source)) +
+  ggplot2::geom_point(size = 2) +
+  ggplot2::scale_x_continuous(limits=c(min(data_combined$stat_week)-1, max(data_combined$stat_week)), n.breaks = 15) +
+  theme_bw()
+
+```
+
+Data frame containing both the creel data and tribal net data.
+
+::: {.scroll-container style="overflow-y: auto; height: 300px;"}
+
+```{r}
+data_combined |> 
+  dplyr::relocate(source, year, stat_week, fin_mark, fate, fish_count) |> 
+  gt::gt()
+```
+
+:::

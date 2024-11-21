@@ -295,7 +295,8 @@ data_tribal_net <- data_tribal_net |>
 data_combined <- dplyr::bind_rows(data_creel_catch_Chinook, data_tribal_net)
 
 #calculate mark rate
-data_combined <- data_combined |> 
+mark_rates <- data_combined |> 
+  dplyr::filter(!fin_mark == "UNK") |> 
   dplyr::group_by(source, year, stat_week) |> 
   dplyr::mutate(
     total_fish = sum(fish_count, na.rm = TRUE),
@@ -306,10 +307,10 @@ data_combined <- data_combined |>
   dplyr::ungroup()
 
 #plot
-data_combined |> 
+mark_rates |> 
   ggplot2::ggplot(aes(x = stat_week, y = mark_rate, col = source)) +
   ggplot2::geom_point(size = 2) +
-  ggplot2::scale_x_continuous(limits=c(min(data_combined$stat_week)-1, max(data_combined$stat_week)), n.breaks = 15) +
+  ggplot2::scale_x_continuous(limits=c(min(mark_rates$stat_week)-1, max(mark_rates$stat_week)), n.breaks = 15) +
   theme_bw()
 
 ```

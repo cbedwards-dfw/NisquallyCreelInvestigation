@@ -23,3 +23,9 @@ agreement that your changes are ready to go, they will merge your changes into t
 probably deleted the branch on github. You can delete your local version with
 `git branch -d branchname` in the terminal
 - The work is done! Congrats!
+
+
+- CH 11/20/2024
+   - moving net mark rate excel file to original_data
+   - created "tidy_net_mark_rates.R" in scripts folder to process data
+   - saved cleaned "tidy" data in long format to cleaned_data folder as "tidy_net_mark_rates.csv"

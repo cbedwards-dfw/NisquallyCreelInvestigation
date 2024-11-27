@@ -27,8 +27,8 @@ year,stat_week,day_interval,fate,fin_mark,catch
 2021,43,10/17-10/23,released,um,2.1
 2021,44,10/24-10/30,released,ad,0
 2021,44,10/24-10/30,released,um,0
-2021,45,10/33-11/06,released,ad,0
-2021,45,10/33-11/06,released,um,0
+2021,45,10/30-11/06,released,ad,0
+2021,45,10/30-11/06,released,um,0
 2021,46,11/07-11/13,released,ad,0
 2021,46,11/07-11/13,released,um,0
 2022,31,7/24-7/30,released,ad,0
@@ -123,8 +123,8 @@ year,stat_week,day_interval,fate,fin_mark,catch
 2021,43,10/17-10/23,kept,um,0
 2021,44,10/24-10/30,kept,ad,0
 2021,44,10/24-10/30,kept,um,0
-2021,45,10/33-11/06,kept,ad,0
-2021,45,10/33-11/06,kept,um,0
+2021,45,10/30-11/06,kept,ad,0
+2021,45,10/30-11/06,kept,um,0
 2021,46,11/07-11/13,kept,ad,0
 2021,46,11/07-11/13,kept,um,0
 2022,31,7/24-7/30,kept,ad,0

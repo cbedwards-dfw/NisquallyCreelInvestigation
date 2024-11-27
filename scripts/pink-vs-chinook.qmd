@@ -11,6 +11,7 @@ library("suncalc")
 library("tidyverse")
 library("patchwork")
 library("gt")
+library("here")
 library("mgcv")
 library("gratia")
 ```
@@ -99,13 +100,24 @@ doy_2md=function(i){
 dat.2023 = 
   catch |> 
   filter(species == "Pink" | species == "Chinook" & fin_mark == "UM") |> 
-   count(year, event_date, species, name = "daily_catch") |> 
+  count(year, event_date, species, name = "daily_catch") |> 
   mutate(doy = yday(event_date),
+         species = case_match(species,
+                              "Chinook"~"Unmarked\nChinook",
+                              "Pink" ~ "Pink"),
          species.fac = as.factor(species))
+
+ggplot(dat.2023, aes(x = doy, y = daily_catch, col = species.fac))+
+  geom_point(size = 3)+
+  scale_x_continuous(labels = doy_2md)+
+  theme_bw(base_size = 16)+
+  xlab("date")+
+  ggtitle("2023 Daily Encounters (Creel)")+
+  labs(col = "Species")
 
 ## smoothing spline using a negative binomial distribution (good for count data)
 out = gam(daily_catch ~ s(doy, by = species.fac),
-           method = "REML", family = "nb",
+          method = "REML", family = "nb",
           data = dat.2023)
 ## plotting the  smooths themselves:
 draw(out)
@@ -116,17 +128,18 @@ gam.check(out)
 ## looks good
 
 dat.pred = expand_grid(doy = evenly(dat.2023$doy, by = 0.1),
-                     species.fac = unique(dat.2023$species.fac)
-                     )
+                       species.fac = unique(dat.2023$species.fac)
+)
 dat.pred$daily_catch = predict(out, newdata = dat.pred, type = "response")
 
 ggplot(dat.pred, aes(x = doy, y = daily_catch, col = species.fac))+
-  geom_path()+
-  geom_point(data = dat.2023)+
-    scale_x_continuous(labels = doy_2md)+
-    theme_bw(base_size = 14)+
+  geom_path(linewidth = 1)+
+  geom_point(data = dat.2023, size = 3)+
+  scale_x_continuous(labels = doy_2md)+
+  theme_bw(base_size = 16)+
   xlab("date")+
-  ggtitle("2023 with smoothing splines")
+  ggtitle("2023 Daily Encounters with smoothing splines")+
+  labs(col = "Species")
 
 
 pred.ratio.2023 = dat.pred |> 
@@ -141,7 +154,7 @@ ggplot(pred.ratio.2023, aes(x = doy, y = proportion.chinook))+
   geom_path()+
   theme_bw(base_size = 14)+
   scale_x_continuous(labels = doy_2md)+
-    xlab("date")+
+  xlab("date")+
   ggtitle("2023 Proportion of Unmarked chinook")
 
 ## estimating uncertainty
@@ -157,8 +170,8 @@ ggplot(pred.ratio.2023, aes(x = doy, y = proportion.chinook))+
 # beta_sim = rmvn(n = 20, coef(out), Vb)
 
 sm_post = smooth_samples(out, "s(doy",
-               n = 20, seed = 42,
-               partial_match = TRUE)
+                         n = 20, seed = 42,
+                         partial_match = TRUE)
 draw(sm_post)
 
 ```
@@ -169,13 +182,13 @@ draw(sm_post)
 dat.2021 = 
   catch |> 
   filter(species == "Pink" | species == "Chinook" & fin_mark == "UM") |> 
-   count(year, event_date, species, name = "daily_catch") |> 
+  count(year, event_date, species, name = "daily_catch") |> 
   mutate(doy = yday(event_date),
          species.fac = as.factor(species))
 
 ## smoothing spline using a negative binomial distribution (good for count data)
 out = gam(daily_catch ~ s(doy, by = species.fac),
-           method = "REML", family = "nb",
+          method = "REML", family = "nb",
           data = dat.2021)
 ## plotting the  smooths themselves:
 draw(out)
@@ -186,15 +199,15 @@ gam.check(out)
 ## looks good
 
 dat.pred = expand_grid(doy = evenly(dat.2021$doy, by = 0.1),
-                     species.fac = unique(dat.2021$species.fac)
-                     )
+                       species.fac = unique(dat.2021$species.fac)
+)
 dat.pred$daily_catch = predict(out, newdata = dat.pred, type = "response")
 
 ggplot(dat.pred, aes(x = doy, y = daily_catch, col = species.fac))+
   geom_path()+
   geom_point(data = dat.2021)+
-    scale_x_continuous(labels = doy_2md)+
-    theme_bw(base_size = 14)+
+  scale_x_continuous(labels = doy_2md)+
+  theme_bw(base_size = 14)+
   xlab("date")+
   ggtitle("2021 with smoothing splines")
 
@@ -209,10 +222,10 @@ pred.ratio.2021 = dat.pred |>
 #   mutate(proportion.chinook = Chinook / (Chinook + Pink))
 ggplot(pred.ratio.2021, aes(x = doy, y = proportion.chinook))+
   geom_path()+
-  theme_bw(base_size = 14)+
+  theme_bw(base_size = 16)+
   scale_x_continuous(labels = doy_2md)+
-    xlab("date")+
-  ggtitle("2021 Proportion of Unmarked chinook")
+  xlab("date")+
+  ggtitle("2021 Proportion of \"Unmarked chinook\" that are unmarked chinook")
 
 ## estimating uncertainty
 
@@ -227,8 +240,8 @@ ggplot(pred.ratio.2021, aes(x = doy, y = proportion.chinook))+
 # beta_sim = rmvn(n = 20, coef(out), Vb)
 
 sm_post = smooth_samples(out, "s(doy",
-               n = 20, seed = 42,
-               partial_match = TRUE)
+                         n = 20, seed = 42,
+                         partial_match = TRUE)
 draw(sm_post)
 
 ```
@@ -238,7 +251,17 @@ draw(sm_post)
 Importing tribal net data from cleaned_data/tidy_net_mark_rates.csv. Originally in Excel spreadsheet format (original_data/Net Mark Rate for Creel 2021-2023_021624_DateLineUpFINAL.xlsx), transformed to tidy format in scripts/tidy_net_mark_rates.R, and saved to cleaned_data folder.
 
 ```{r}
-data_tribal_net <- readr::read_csv("../cleaned_data/tidy_net_mark_rates.csv")
+data_tribal_net <- readr::read_csv(here("cleaned_data/tidy_net_mark_rates.csv"))
+
+data_tribal_net |> 
+  filter(fate == "Kept") |> 
+  group_by(year, fin_mark) |> 
+  summarize(count = sum(fish_count, na.rm = T))
+
+data_tribal_net |> 
+  filter(fate == "Released") |> 
+  group_by(year, fin_mark) |> 
+  summarize(count = sum(fish_count, na.rm = T))
 
 #format tribal net data
 data_tribal_net <- data_tribal_net |> 
@@ -274,21 +297,26 @@ stat_weeks <- data_tribal_net |>
     ),
     # Extract and parse start and end dates
     start_date = lubridate::mdy(paste0(sub("-.*", "", day_interval), "/", year)),
-    end_date = lubridate::mdy(paste0(sub(".+-", "", day_interval), "/", year))
+    end_date = lubridate::mdy(paste0(sub(".*-", "", day_interval), "/", year))
   ) |> 
   dplyr::select(-day_interval) |> 
   dplyr::distinct()
 
+## potential problem: IS THE CREEL DATA AGGREGATED DAILY?
+stat_weeks$event_date = purrr::map2(.x = stat_weeks$start_date, .y = stat_weeks$end_date, \(x, y) seq(x, y, by = "day"))
+
+stat_weeks = stat_weeks |> 
+  unnest(event_date)
+
 #assign stat week to creel data
 data_creel_catch_Chinook <- data_creel_catch_Chinook |> 
-  dplyr::left_join(stat_weeks, by = "year") |> 
-  dplyr::filter(event_date >= start_date & event_date <= end_date) |> 
+  dplyr::left_join(stat_weeks, by = c("year", "event_date"))|> 
   dplyr::select(-start_date, -end_date, -event_date) |> 
   dplyr::mutate(source = "creel")
 
 #make id col
 data_tribal_net <- data_tribal_net |> 
-  dplyr::mutate(source = "tribal") |> 
+  dplyr::mutate(source = "treaty") |> 
   dplyr::select(-day_interval)
 
 #combine rec creel and tribal net data
@@ -298,10 +326,10 @@ data_combined <- dplyr::bind_rows(data_creel_catch_Chinook, data_tribal_net)
 mark_rates <- data_combined |> 
   dplyr::filter(!fin_mark == "UNK") |> 
   dplyr::group_by(source, year, stat_week) |> 
-  dplyr::mutate(
+  dplyr::summarize(
     total_fish = sum(fish_count, na.rm = TRUE),
     ad_fish = sum(fish_count[fin_mark == "AD"], na.rm = TRUE),
-    mark_rate = round((total_fish - ad_fish) / total_fish, 2)
+    mark_rate = round( ad_fish / total_fish, 2)
   ) |> 
   dplyr::filter(!is.na(mark_rate)) |> 
   dplyr::ungroup()
@@ -311,9 +339,228 @@ mark_rates |>
   ggplot2::ggplot(aes(x = stat_week, y = mark_rate, col = source)) +
   ggplot2::geom_point(size = 2) +
   ggplot2::scale_x_continuous(limits=c(min(mark_rates$stat_week)-1, max(mark_rates$stat_week)), n.breaks = 15) +
+  facet_wrap(.~ year, ncol = 1)+
   theme_bw()
 
+
+
 ```
+
+### More details
+
+Collin has already written a function to calculate 95% confidence intervals from individual weekly samples of binomial data. This primarily uses the assymptotic method to calculate the confidence intervals in logit space and then transforms them back. When one of the two classes has 0 observations (e.g. entirely marked or unmarked fish in a week), 
+the assymptotic method breaks down. In that case, the function instead uses likelihood profiling. 
+
+Code can also be found here: https://github.com/FRAMverse/snippets/blob/main/R/confint-fromsample.R.
+
+```{r}
+## calculate confidence intervals of binomial data from the proportion of successes and the total number of trials.
+## Common use case: Our test fishing found a mark rate of 0.7 from 26 total fish. What's our confidence interval for that?
+## Can be used for other classifications of fish as long as there are only 2 classes (e.g. "is legal size" vs "not legal size" or
+## "is unmarked natural" vs "is not unmarked natural")
+## 
+## Primarily uses the assymptotic method to calculate confidence intervals in logit space and then transforms them back.
+## Transformation of the standard error is based on the delta method.
+## In cases in which p = 0 or p = 1 (e.g., all fish were marked or all fish were unmarked), assymptotic methods fail, and this
+## uses likelihood profiling method instead. It was not obvious how to extend likelihood profiling to handle cases in which the level was 
+## not 0.95, so in those cases the function gives a warning and returns the (meaningless) assymptotic estimate.
+## 
+## The function is vectorized, and can be used to calculate the CIs for an entire dataframe of fish data at once.
+
+confint_fromsample = function(p, #sample probability of marked (or other status of interest)
+                              n, #total number of samples
+                              level = 0.95 #confidence level for the confidence intervals. Default is 95% confidence intervals.
+){
+  ## input error checking
+  p.clean = p[!is.na(p)]
+  if(any(p.clean<0 | p.clean>1)){
+    cli::cli_abort("`p` is a probability and must be between 0 and 1")
+  }
+  if(any(n %% 1 !=0 | n < 0)){
+    cli::cli_abort("`n` must be a positive integer")
+  }
+  if(length(p) != length (n)){
+    cli::cli_abort("`p` and `n` must have the same length.")
+  }
+  
+  ## standard error for P
+  se = sqrt((p)*(1-p)/(n-1))
+  ## transform p and se into logit space
+  ## The transformation of the se relies on the delta method:
+  ## https://www.proteus.co.nz/news-tips-and-tricks/calculating-standard-errors-for-logistic-regressionlogit-link-using-the-delta-method
+  
+  beta = log(p/(1-p))
+  se.beta = se/(p * (1-p))
+  
+  ## 95% confidence interval = mean +/- 1.96 * standard error
+  multiplier = qnorm(1-(1-level)/2)
+  conf = cbind(beta - multiplier * se.beta, beta + multiplier* se.beta)
+  res = exp(conf)/(1+exp(conf))
+  
+  ## using likelihood profiling to handle cases when p = 0 or 1. 
+  if(any( p.clean == 0 | p.clean == 1)){
+    if(level != 0.95){
+      cli::cli_alert_warning("Extreme values detected (p = 0 or p = 1). Current methods only calculate CIs correctly in these cases when level = 0.95")
+    }else{
+      ## NOT vectorized yet
+      ind.do = which(p == 0 | p == 1)
+      phats = seq(0.001, 0.999, by = 0.001)
+      for(ind in ind.do){
+        log.liks = log(dbinom(p[ind] * n[ind], prob = phats, size = n[ind]))
+        conf = range(phats[log.liks - max(log.liks) > -2])
+        res[ind,] = c(conf[1], conf[2])
+      }
+    }
+  }
+  ## transform confidence interval back from logit space into normal space
+  
+  colnames(res) = c("ci.low", "ci.high")
+  return(res)
+}
+
+# 
+# 
+# ### Examples -----------
+# 
+# ## works for individual cases
+# confint_fromsample(p = .7, n = 26)
+# 
+# ## Can give vectors of p and n to provide multiple confidence intervals.
+# confint_fromsample(p = c(0, 0.7, NA), n = c(26, 26, 0))
+
+```
+
+```{r}
+mark_rates = cbind(mark_rates,
+                   confint_fromsample(p = mark_rates$mark_rate, n = round(mark_rates$total_fish))
+)
+
+# #   mark_rates |> 
+# #     arrange(year, stat_week) |>
+# #   ## using code I developed here: https://github.com/FRAMverse/snippets/blob/main/R/adaptive%20confidence%20plotting.R
+# #   ## in order to ensure that we have confidence envelopes = segments that correctly
+# #   ## span the space that is sampled.
+# #   mutate(ribbon.test = is.na(lag(mr, n = 1)) + is.na(lead(mr, n=1))) |>
+# # #   ## make ribbon version of entries
+# #   mutate(upper.ribbon = if_else(ribbon.test!=2, ci.high, NA),
+# #          lower.ribbon = if_else(ribbon.test!=2, ci.low, NA)) |>
+# #   mutate(upper.segment = if_else(ribbon.test==2, ci.high, NA),
+# #          lower.segment = if_else(ribbon.test==2, ci.low, NA) ) |>
+# #   select(-ribbon.test)
+# 
+# #plot
+mark_rates = mark_rates |> 
+  mutate(stat_week_plot = stat_week + .1 * (source == "creel"))
+
+mark_rates |> 
+  ggplot2::ggplot(aes(x = stat_week_plot, y = mark_rate, col = source)) +
+  geom_ribbon(aes(x = stat_week_plot, ymin = ci.low, ymax = ci.high), alpha = 0.2)+
+  ggplot2::geom_point(size = 2) +
+  ggplot2::scale_x_continuous(limits=c(min(mark_rates$stat_week)-1, max(mark_rates$stat_week)), n.breaks = 15) +
+  facet_wrap(.~ year, ncol = 1)+
+  theme_bw()
+
+temp = mark_rates |>
+  arrange(source, year, stat_week) |>
+  group_by(source, year) |> 
+  complete(stat_week = full_seq(stat_week, period = 1)) |> 
+  ## using code I developed here: https://github.com/FRAMverse/snippets/blob/main/R/adaptive%20confidence%20plotting.R
+  ## in order to ensure that we have confidence envelopes = segments that correctly
+  ## span the space that is sampled.
+  mutate(ribbon.test = is.na(lag(mark_rate, n = 1)) + is.na(lead(mark_rate, n=1))) |>
+  #   ## make ribbon version of entries
+  mutate(upper.ribbon = if_else(ribbon.test!=2, ci.high, NA),
+         lower.ribbon = if_else(ribbon.test!=2, ci.low, NA)) |>
+  mutate(upper.segment = if_else(ribbon.test==2, ci.high, NA),
+         lower.segment = if_else(ribbon.test==2, ci.low, NA) ) |>
+  select(-ribbon.test) |> 
+  mutate(ribbon.temp = is.na(upper.ribbon),
+         ribbon.group = cumsum(ribbon.temp)) |> 
+  ungroup() |> 
+  select(-ribbon.temp)
+
+temp |> 
+  ggplot2::ggplot(aes(x = stat_week_plot, y = mark_rate, col = source)) +
+  geom_ribbon(aes(x = stat_week_plot, ymin = lower.ribbon, ymax = upper.ribbon, col = source, group = interaction(source, ribbon.group)), 
+              na.rm = FALSE, alpha = 0.2)+
+  geom_segment(aes(x = stat_week_plot, y = lower.segment, yend = upper.segment), linewidth = 0.8, alpha = 0.5)+
+  ggplot2::geom_point(size = 2) +
+  ggplot2::scale_x_continuous(limits=c(min(mark_rates$stat_week)-1, max(mark_rates$stat_week)), n.breaks = 15) +
+  facet_wrap(.~ year, ncol = 1)+
+  xlab("statistical week")+
+  theme_bw(base_size = 14)
+
+## making subplots for later stuff:
+gp.mr.2021 = temp |> 
+  filter(year == 2021) |> 
+  ggplot2::ggplot(aes(x = stat_week_plot, y = mark_rate, col = source)) +
+  geom_ribbon(aes(x = stat_week_plot, ymin = lower.ribbon, ymax = upper.ribbon, col = source, group = interaction(source, ribbon.group)), 
+              na.rm = FALSE, alpha = 0.2)+
+  geom_segment(aes(x = stat_week_plot, y = lower.segment, yend = upper.segment), linewidth = 0.8, alpha = 0.5)+
+  ggplot2::geom_point(size = 2) +
+  ggplot2::scale_x_continuous(limits=c(min(mark_rates$stat_week)-1, max(mark_rates$stat_week)), n.breaks = 15) +
+  xlab("statistical week")+
+  # facet_wrap(.~ year, ncol = 1)+
+  theme_bw(base_size = 14)
+
+gp.mr.2023 = temp |> 
+  filter(year == 2023) |> 
+  ggplot2::ggplot(aes(x = stat_week_plot, y = mark_rate, col = source)) +
+  geom_ribbon(aes(x = stat_week_plot, ymin = lower.ribbon, ymax = upper.ribbon, col = source, group = interaction(source, ribbon.group)), 
+              na.rm = FALSE, alpha = 0.2)+
+  geom_segment(aes(x = stat_week_plot, y = lower.segment, yend = upper.segment), linewidth = 0.8, alpha = 0.5)+
+  ggplot2::geom_point(size = 2) +
+  ggplot2::scale_x_continuous(limits=c(min(mark_rates$stat_week)-1, max(mark_rates$stat_week)), n.breaks = 15) +
+  xlab("statistical week")+
+  # facet_wrap(.~ year, ncol = 1)+
+  theme_bw(base_size = 14)
+```
+
+### Putting pink vs chinook on stat-week scale
+
+```{r}
+ratio.sum.2021 = pred.ratio.2021 |> 
+  mutate(event_date = mdy("01/01/2021") + duration(round(doy-1), unit = "days")) |> 
+  left_join(stat_weeks) |>
+  filter(!is.na(stat_week)) |> 
+  group_by(stat_week) |> 
+  summarize(chinook = sum(Chinook), 
+            pink = sum(Pink),
+            proportion.chinook = chinook/(pink+chinook)
+  )
+
+gp.props.2021 = ggplot(ratio.sum.2021, aes(x = stat_week, y = proportion.chinook))+
+  geom_path()+
+  geom_point()+
+  xlab("statistical week")+
+  scale_x_continuous(limits=c(30,45), n.breaks = 15) +
+  theme_bw(base_size = 14)
+
+ratio.sum.2023 = pred.ratio.2023 |> 
+  mutate(event_date = mdy("01/01/2023") + duration(round(doy-1), unit = "days")) |> 
+  left_join(stat_weeks) |>
+  filter(!is.na(stat_week)) |> 
+  group_by(stat_week) |> 
+  summarize(chinook = sum(Chinook), 
+            pink = sum(Pink),
+            proportion.chinook = chinook/(pink+chinook)
+  )
+
+gp.props.2023 = ggplot(ratio.sum.2023, aes(x = stat_week, y = proportion.chinook))+
+  geom_path()+
+  geom_point()+
+  xlab("statistical week")+
+  scale_x_continuous(limits=c(30,45), n.breaks = 15) +
+  theme_bw(base_size = 14)
+
+gp.mr.2021/gp.props.2021 & plot_annotation(title = "2021 comparison of mark rate and pink vs chinook")
+
+gp.mr.2023/gp.props.2023 & plot_annotation(title = "2023 comparison of mark rate and pink vs chinook")
+
+
+```
+
+
 
 Data frame containing both the creel data and tribal net data.
 

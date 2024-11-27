@@ -1,0 +1,250 @@
+---
+title: "Net data exploration"
+author: "Collin Edwards"
+date: last-modified
+execute:
+  warning: false
+message: false
+format:
+  html:
+    code-fold: true
+embed-resources: true
+toc: true
+title-block-banner: "#1D886E"
+css: style.css
+project:
+  title: ""
+  output-dir: results/quarto_output/
+---
+
+```{r}
+library(here)
+library(tidyverse)
+library(mgcv)
+library(gratia)
+library(lme4)
+```
+
+
+## Overview
+
+This document is meant to explore the Net data from the Nisqually tribe, in particular looking at changes in markrate 
+across the season. While we don't expect an exact match between the creel results and Nisqually net data, we expect them to be broadly similar.
+
+At present, it appears that we have weekly expanded encounter numbers. I am currently moving forward with that, but the raw sampling data would probably make for stronger modeling. 
+
+
+## setup 
+
+This reads in the tidied net mark rate data, which is cleaned in `scripts/tidy_net_mark_rates.R`.
+
+```{r}
+dat = read_csv(here("cleaned_data/tidy_net_mark_rates.csv"))
+```
+
+I've already written a function to calculate 95% confidence intervals from individual weekly samples of binomial data. This primarily uses the assymptotic method to calculate the confidence intervals in logit space and then transforms them back. When one of the two classes has 0 observations (e.g. entirely marked or unmarked fish in a week), 
+the assymptotic method breaks down. In that case, the function instead uses likelihood profiling. 
+
+Code can also be found here: https://github.com/FRAMverse/snippets/blob/main/R/confint-fromsample.R.
+
+```{r}
+## calculate confidence intervals of binomial data from the proportion of successes and the total number of trials.
+## Common use case: Our test fishing found a mark rate of 0.7 from 26 total fish. What's our confidence interval for that?
+## Can be used for other classifications of fish as long as there are only 2 classes (e.g. "is legal size" vs "not legal size" or
+## "is unmarked natural" vs "is not unmarked natural")
+## 
+## Primarily uses the assymptotic method to calculate confidence intervals in logit space and then transforms them back.
+## Transformation of the standard error is based on the delta method.
+## In cases in which p = 0 or p = 1 (e.g., all fish were marked or all fish were unmarked), assymptotic methods fail, and this
+## uses likelihood profiling method instead. It was not obvious how to extend likelihood profiling to handle cases in which the level was 
+## not 0.95, so in those cases the function gives a warning and returns the (meaningless) assymptotic estimate.
+## 
+## The function is vectorized, and can be used to calculate the CIs for an entire dataframe of fish data at once.
+
+confint_fromsample = function(p, #sample probability of marked (or other status of interest)
+                              n, #total number of samples
+                              level = 0.95 #confidence level for the confidence intervals. Default is 95% confidence intervals.
+){
+  ## input error checking
+  p.clean = p[!is.na(p)]
+  if(any(p.clean<0 | p.clean>1)){
+    cli::cli_abort("`p` is a probability and must be between 0 and 1")
+  }
+  if(any(n %% 1 !=0 | n < 0)){
+    cli::cli_abort("`n` must be a positive integer")
+  }
+  if(length(p) != length (n)){
+    cli::cli_abort("`p` and `n` must have the same length.")
+  }
+  
+  ## standard error for P
+  se = sqrt((p)*(1-p)/(n-1))
+  ## transform p and se into logit space
+  ## The transformation of the se relies on the delta method:
+  ## https://www.proteus.co.nz/news-tips-and-tricks/calculating-standard-errors-for-logistic-regressionlogit-link-using-the-delta-method
+  
+  beta = log(p/(1-p))
+  se.beta = se/(p * (1-p))
+  
+  ## 95% confidence interval = mean +/- 1.96 * standard error
+  multiplier = qnorm(1-(1-level)/2)
+  conf = cbind(beta - multiplier * se.beta, beta + multiplier* se.beta)
+  res = exp(conf)/(1+exp(conf))
+  
+  ## using likelihood profiling to handle cases when p = 0 or 1. 
+  if(any( p.clean == 0 | p.clean == 1)){
+    if(level != 0.95){
+      cli::cli_alert_warning("Extreme values detected (p = 0 or p = 1). Current methods only calculate CIs correctly in these cases when level = 0.95")
+    }else{
+      ## NOT vectorized yet
+      ind.do = which(p == 0 | p == 1)
+      phats = seq(0.001, 0.999, by = 0.001)
+      for(ind in ind.do){
+        log.liks = log(dbinom(p[ind] * n[ind], prob = phats, size = n[ind]))
+        conf = range(phats[log.liks - max(log.liks) > -2])
+        res[ind,] = c(conf[1], conf[2])
+      }
+    }
+  }
+  ## transform confidence interval back from logit space into normal space
+  
+  colnames(res) = c("ci.low", "ci.high")
+  return(res)
+}
+# 
+# 
+# ### Examples -----------
+# 
+# ## works for individual cases
+# confint_fromsample(p = .7, n = 26)
+# 
+# ## Can give vectors of p and n to provide multiple confidence intervals.
+# confint_fromsample(p = c(0, 0.7, NA), n = c(26, 26, 0))
+
+```
+
+When faceting multiple years of timeseries data, I find it helpful to plot by day of year, and then when making plots, to use the following labeling function to give approximate date. Here "approximate" is because the plot won't try to account for an extra day in Feb in leap years, which may be present in some years and not others. This doesn't affect the actual data or any analyses, and at most means that the plot is off by 1 day.
+
+```{r}
+## https://github.com/FRAMverse/snippets/blob/main/R/doy_2md.R
+doy_2md=function(i){
+  ymd=as.Date(i-1, origin="2019-01-01")
+  return(format(ymd, "%b %d"))
+}
+```
+
+## Basic visualization
+
+### Raw data
+
+```{r}
+ggplot(dat, aes(x = stat_week, y = catch, col = interaction(fate, fin_mark)))+
+  geom_path()+
+  geom_point()+
+  facet_wrap(.~ year, ncol = 1)+
+  ggtitle("Raw data")+
+  theme_bw(base_size = 13)
+
+dat.mod = dat |> 
+  group_by(year, stat_week, day_interval, fin_mark) |> 
+  summarize(catch = sum(catch)) |> 
+  ungroup()
+
+
+ggplot(dat.mod, aes(x = stat_week, y = catch, col = interaction(fin_mark)))+
+  geom_path()+
+  geom_point()+
+  facet_wrap(.~ year, ncol = 1)+
+  ggtitle("Raw data: mark status only")+
+  theme_bw(base_size = 13)
+
+```
+
+### Mark rate
+
+Note that the confints here are PROBABLY NOT CORRECT, as it appears that this reflects expansions for effort.
+If that increases catch, the CIs here will be biased towards being narrow.
+
+```{r}
+dat.mr = dat.mod |> 
+  pivot_wider(names_from = fin_mark, values_from = catch) |> 
+  mutate(mr = ad/(ad+um))
+
+dat.temp = dat.mr |> 
+  na.omit()
+
+dat.temp = cbind(dat.temp,
+               confint_fromsample(p = dat.temp$mr, n = round(dat.temp$ad+dat.temp$um)))
+
+## some additional code to make sure the ribbons + sgements work well
+dat.mr = left_join(dat.mr, dat.temp) |> 
+  arrange(year, stat_week) |>
+  ## using code I developed here: https://github.com/FRAMverse/snippets/blob/main/R/adaptive%20confidence%20plotting.R
+  ## in order to ensure that we have confidence envelopes = segments that correctly
+  ## span the space that is sampled.
+  mutate(ribbon.test = is.na(lag(mr, n = 1)) + is.na(lead(mr, n=1))) |>
+#   ## make ribbon version of entries
+  mutate(upper.ribbon = if_else(ribbon.test!=2, ci.high, NA),
+         lower.ribbon = if_else(ribbon.test!=2, ci.low, NA)) |>
+  mutate(upper.segment = if_else(ribbon.test==2, ci.high, NA),
+         lower.segment = if_else(ribbon.test==2, ci.low, NA) ) |>
+  select(-ribbon.test)
+
+## clean up date handling
+
+dat.mr = dat.mr |> 
+  mutate(date.start= mdy(paste0(gsub("-.*", "", day_interval), "/", year)),
+         date.end = mdy(paste0(gsub(".*-", "", day_interval), "/", year)),
+         date.mid = date.start + duration(3, units = "days"),
+         doy.mid = yday(date.mid))
+
+## Here we use "upper.segment and "lower.segment" to plot confidence bars, 
+## and "upper.ribbon" and "lower.ribbon" to plot confidence envelopes.
+ggplot(dat.mr, aes(x = doy.mid, y = mr))+
+  geom_ribbon(aes(x = doy.mid, ymin = lower.ribbon, ymax = upper.ribbon), alpha = 0.2)+
+  geom_segment(aes(x = doy.mid, y = lower.segment, yend = upper.segment), linewidth = 0.8, alpha = 0.5)+
+  geom_point() +
+  geom_path() + 
+  facet_wrap(.~year, ncol = 1)+
+  theme_bw(base_size = 13)+
+  scale_x_continuous(labels = doy_2md)+
+  labs(title = "Sampled mark rate of Nisqually net",
+       subtitle = "confidence intervals estimated as if\nexpanded encounters were sampled encounters",
+       y = "Mark rate", 
+       x = "")
+
+
+ggplot(dat.mr, aes(x = doy.mid, y = mr))+
+  geom_segment(aes(x = doy.mid, y = ci.low, yend = ci.high), linewidth = 0.8, alpha = 0.5)+
+  geom_point() +
+  geom_path() + 
+  facet_wrap(.~year, ncol = 1)+
+  theme_bw(base_size = 13)+
+  scale_x_continuous(labels = doy_2md)+
+  labs(title = "Sampled mark rate of Nisqually net, no envelope",
+       subtitle = "confidence intervals estimated as if\nexpanded encounters were sampled encounters",
+       y = "Mark rate",
+       x = "")
+
+dat.mr = dat.mr |> 
+  mutate(doy.mid.offset = doy.mid + (year - 2021)*.1)
+
+ggplot(dat.mr, aes(x = doy.mid.offset, y = mr, col = as.factor(year), fill = as.factor(year)))+
+  geom_segment(aes(x = doy.mid.offset, y = ci.low, yend = ci.high), linewidth = 0.8, alpha = 0.5)+
+  geom_point() +
+  geom_path() + 
+  theme_bw(base_size = 13)+
+  scale_x_continuous(labels = doy_2md)+
+  labs(title = "Sampled mark rate of Nisqually net",
+       subtitle = "confidence intervals estimated as if\nexpanded encounters were sampled encounters",
+       y = "Mark rate",
+       x = "")
+  
+```
+
+## creel data
+
+```{r}
+
+```
+

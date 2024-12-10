@@ -29,3 +29,8 @@ probably deleted the branch on github. You can delete your local version with
    - moving net mark rate excel file to original_data
    - created "tidy_net_mark_rates.R" in scripts folder to process data
    - saved cleaned "tidy" data in long format to cleaned_data folder as "tidy_net_mark_rates.csv"
+
+- CH 12/10/2024
+   - saved "20 years Net Timing Nisqually Clipped Unclipped Chinook.xlsx" file to original_data folder
+   - created "tidy_net_mark_rates_v2.R" in scripts folder to process data
+   - saved processed data to cleaned_data folder as "tidy_20-years-net-mark-rates.csv"

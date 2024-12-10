@@ -1,0 +1,130 @@
+---
+title: "fishery_descriptive_stats"
+editor: visual
+---
+
+```{r}
+library("CreelEstimateR")
+library("suncalc")
+library("tidyverse")
+library("patchwork")
+library("gt")
+library("here")
+library("mgcv")
+library("gratia")
+```
+
+```{r}
+# define fisheries we want data for
+fisheries <- c("Nisqually salmon 2021", "Nisqually salmon 2022", "Nisqually salmon 2023")
+
+# download the data from data.wa.gov
+datapull <- set_names(fisheries) |> 
+  map(~fetch_dwg(fishery_name = .x))
+
+interviews <- datapull$`Nisqually salmon 2023`$interview |> 
+  bind_rows(datapull$`Nisqually salmon 2022`$interview, datapull$`Nisqually salmon 2021`$interview) |> 
+   mutate(
+    month = lubridate::month(event_date),
+    year = lubridate::year(event_date),
+    week = lubridate::week(event_date)
+  )
+
+# bind date and waterbody data to the creel interview-based catch records
+catch <- datapull$`Nisqually salmon 2023`$catch |> 
+  bind_rows(datapull$`Nisqually salmon 2022`$catch, datapull$`Nisqually salmon 2021`$catch) |>
+  left_join(interviews |> 
+              select(interview_id, event_date, water_body),
+            by = "interview_id") |> 
+  mutate(
+    year = year(event_date),
+    month = month(event_date)
+  )
+
+
+```
+
+# Regulations and fishery design
+
+What regulations were consistent and which changed over the three-year period? How did this impact the study area in each year?
+
+## Spatial locations
+
+## Season length and closures days
+
+# Creel data collection 2021-2023
+
+How was data collected across years? What were key consistencies and changes made?
+
+Across the three-year monitoring period the implementation of the WDFW roving creel design underwent refinement regarding aspects of data collection across the primary data components representing effort and interview data. This includes how data was collected and what specific information was captured during survey activities.
+
+
+## Interview data
+
+Methods to conduct angler interviews to quantify catch rate were largely consistent over the three-year period.
+
+### Data fields
+
+In the sub-sections below we cross-walk data collected across the three-year period. The transition to electronic data capture and adoption of census effort counts beginning in 2022 created some grouping characteristics between the 2021 and 2022-2023 data.
+
+```{r}
+# take a look at single "representative" interview record from each of the three years
+
+interviews |> group_by(year) |> slice(1) %>% ungroup() |> glimpse()
+
+
+```
+
+#### Angler type
+
+Field used in 2021 - in field assignment of whether angler fihed from the bank or from a boat. Beginning in 2022, specific interview fields (e.g., boat_type, boat_used, fish_from_boat) were used to collect more detailed information on the location where a party fished and the type of craft used if they fished from a floating device. Those fields were used to derive an angler type during a standardized data summary process.
+
+#### Interview location vs. fishing location
+
+The field interview_location was used in 2021 to make a spatial assignment to fishing activity and associated catch for a given angler party's interview data. We refined this approach beginning in 2022 with the use of the field fishing_location, which maps to a more specific question "*where were you fishing today*", relative to a distinct question capturing the location where the interview was obtained. Because this field was not collected in 2021, we assumed that an interview_location's section represented that angler party's fishing_location.
+
+#### Trip status, incomplete vs. complete trip interviews
+
+In 2021, a mix of both completed and incomplete trip interviews were obtained by survey staff. Beginning in 2022, staff were instructed to only obtain complete trip interviews. Check with D11 about any use of incomplete interviews in 2021 (I think they excluded from estimation?).
+
+## effort data
+
+Full census effort count surveys were not conducted in 2021. In 2021, an alternative paired survey design was used to compare counts of vehicles and trailers to counts of anglers. This approach differs from the standard effort census count method, where continuous census counts of anglers are paired in time with index counts of angler or objects assumed to represent anglers (Figure \_\_). The methodological differences between these years created challenges for direct comparison of effort and total catch between the 2021 and 2022-2023 creel data. For the purposes of this report, we considered effort data collected in 2021 as pilot data that could not used to create comparable estimates of total catch relative to the final two years of the three-year period.
+
+# Descriptive statistics of the creel data
+
+## Interview data
+
+```{r}
+### descriptive statistics for the interview data
+
+# interview_fishing_time <- CreelEstimateR::prep_dwg_interview_fishing_time(dwg_interview = interviews, min_fishing_time = 0.5, study_design = "Standard", person_count_type = "angler") 
+
+# there is heterogeneity in how angler type data was collected across years, this may be leading to the observed "loss" of records  using the above function 
+
+interviews |>
+  filter(trip_status == "Complete") |> 
+  count(year)
+
+
+interviews |>
+  filter(trip_status == "Complete") |> 
+  count(year, month, week) |> 
+  ggplot(aes(week, n)) +
+  geom_point() +
+  facet_wrap(.~year)
+
+
+# 2021
+# all interviews assigned to one section?
+
+# track the difference 
+
+
+```
+
+Notes
+
+ is there any pattern to the reporting in anglers whom refuse to provide zip codes? is zip code a litmus test on "more honest" reporting? in more simple terms, are there systematic differences in catch rate between anglers who:
+ 1) report zip code and those who refuse
+ 2) for the subset who do report, is there a relationship between distance traveled and catch rate? then subsequently, joined catch per interview for specific catch groups to evaluate patterns in CPUE 

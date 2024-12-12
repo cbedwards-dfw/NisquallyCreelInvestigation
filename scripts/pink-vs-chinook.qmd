@@ -15,6 +15,7 @@ library("here")
 library("mgcv")
 library("gratia")
 library("framrsquared")
+library("cli")
 ```
 
 ### From Evan - test pulling data and plot daily catch of Chinook and pink salmon from creel interviews
@@ -306,13 +307,18 @@ mark_rates <- rbind(data_treaty_net, data_creel_catch_Chinook)
 
 ```{r}
 #plot mark rate comparison
-mark_rates |> 
-  dplyr::filter(year %in% c("2021", "2022", "2023")) |> 
-  ggplot2::ggplot(aes(x = management_week, y = mark_rate, col = data_source)) +
-  ggplot2::geom_point(size = 2) +
-  ggplot2::scale_x_continuous(limits=c(min(mark_rates$management_week)-1, max(mark_rates$management_week)), n.breaks = 15) +
-  facet_wrap(.~ year, ncol = 1)+
-  theme_bw()
+# mark_rates |> 
+#   dplyr::filter(year %in% c("2021", "2022", "2023")) |>
+#   ggplot2::ggplot(aes(x = management_week, y = mark_rate, col = data_source)) +
+#   geom_point(size = 2) +
+#   scale_x_continuous(limits=c(min(mark_rates$management_week)-1, max(mark_rates$management_week)), n.breaks = 15) +
+#   facet_wrap(.~ year, ncol = 1) +
+#   labs(y = "Mark Rate (# AD / Total #)", x = "Management Week") +
+#   guides(color = guide_legend(title = "Data Source")) +
+#   theme_bw() +
+#   theme(strip.text = element_text(size = 14),
+#         axis.text = element_text(size = 10),
+#         axis.title = element_text(size = 12))
 
 ```
 
@@ -501,20 +507,31 @@ mark_rates = cbind(mark_rates,
 # 
 # #plot
 mark_rates = mark_rates |> 
-  mutate(stat_week_plot = stat_week + .1 * (source == "creel"))
+  mutate(management_week_plot = management_week + .1 * (data_source == "creel"))
 
 mark_rates |> 
-  ggplot2::ggplot(aes(x = stat_week_plot, y = mark_rate, col = source)) +
-  geom_ribbon(aes(x = stat_week_plot, ymin = ci.low, ymax = ci.high), alpha = 0.2)+
+  dplyr::filter(year %in% c("2021", "2022", "2023")) |>
+  ggplot2::ggplot(aes(x = management_week_plot, y = mark_rate, col = data_source)) +
+  geom_ribbon(aes(x = management_week_plot, ymin = ci.low, ymax = ci.high), alpha = 0.2)+
   ggplot2::geom_point(size = 2) +
-  ggplot2::scale_x_continuous(limits=c(min(mark_rates$stat_week)-1, max(mark_rates$stat_week)), n.breaks = 15) +
+  ggplot2::scale_x_continuous(limits=c(min(mark_rates$management_week)-1, max(mark_rates$management_week)), n.breaks = 15) +
+  scale_color_discrete(labels = c("Recreational Creel", "Tribal Treaty Net")) +
+  # scale_y_continuous(limits = c(0,1), expand = c(0.5,0.5)) +
   facet_wrap(.~ year, ncol = 1)+
-  theme_bw()
+  theme_bw() +
+  labs(y = "Mark Rate (# AD / Total #)", x = "Management Week") +
+  guides(color = guide_legend(title = "Data Source")) +
+  theme(strip.text = element_text(size = 14),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 12)
+        )
 
 temp = mark_rates |>
-  arrange(source, year, stat_week) |>
-  group_by(source, year) |> 
-  complete(stat_week = full_seq(stat_week, period = 1)) |> 
+  dplyr::filter(year %in% c("2021", "2022", "2023"),
+                !is.nan(mark_rate)) |> 
+  arrange(data_source, year, management_week) |>
+  group_by(data_source, year) |> 
+  complete(management_week = full_seq(management_week, period = 1)) |> 
   ## using code I developed here: https://github.com/FRAMverse/snippets/blob/main/R/adaptive%20confidence%20plotting.R
   ## in order to ensure that we have confidence envelopes = segments that correctly
   ## span the space that is sampled.
@@ -531,15 +548,23 @@ temp = mark_rates |>
   select(-ribbon.temp)
 
 temp |> 
-  ggplot2::ggplot(aes(x = stat_week_plot, y = mark_rate, col = source)) +
-  geom_ribbon(aes(x = stat_week_plot, ymin = lower.ribbon, ymax = upper.ribbon, col = source, group = interaction(source, ribbon.group)), 
+  ggplot2::ggplot(aes(x = management_week_plot, y = mark_rate, col = data_source)) +
+  geom_ribbon(aes(x = management_week_plot, ymin = lower.ribbon, ymax = upper.ribbon, col = data_source, group = interaction(data_source, ribbon.group)), 
               na.rm = FALSE, alpha = 0.2)+
-  geom_segment(aes(x = stat_week_plot, y = lower.segment, yend = upper.segment), linewidth = 0.8, alpha = 0.5)+
+  geom_segment(aes(x = management_week_plot, y = lower.segment, yend = upper.segment), linewidth = 0.8, alpha = 0.5)+
   ggplot2::geom_point(size = 2) +
-  ggplot2::scale_x_continuous(limits=c(min(mark_rates$stat_week)-1, max(mark_rates$stat_week)), n.breaks = 15) +
+  ggplot2::scale_x_continuous(limits=c(min(mark_rates$management_week)-1, max(mark_rates$management_week)), n.breaks = 15) +
+  scale_color_discrete(labels = c("Recreational Creel", "Tribal Treaty Net")) +
   facet_wrap(.~ year, ncol = 1)+
   xlab("statistical week")+
-  theme_bw(base_size = 14)
+  theme_bw() +
+  labs(y = "Mark Rate (# AD / Total #)", x = "Management Week") +
+  guides(color = guide_legend(title = "Data Source")) +
+  theme(strip.text = element_text(size = 14),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 12)
+        )
+
 
 ## making subplots for later stuff:
 gp.mr.2021 = temp |> 

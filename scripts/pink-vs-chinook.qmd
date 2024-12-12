@@ -14,6 +14,7 @@ library("gt")
 library("here")
 library("mgcv")
 library("gratia")
+library("framrsquared")
 ```
 
 ### From Evan - test pulling data and plot daily catch of Chinook and pink salmon from creel interviews
@@ -248,108 +249,158 @@ draw(sm_post)
 
 ## Colt - mark rate comparison
 
-Importing tribal net data from cleaned_data/tidy_net_mark_rates.csv. Originally in Excel spreadsheet format (original_data/Net Mark Rate for Creel 2021-2023_021624_DateLineUpFINAL.xlsx), transformed to tidy format in scripts/tidy_net_mark_rates.R, and saved to cleaned_data folder.
+Importing tribal net data from cleaned_data/tidy_20-years-net-mark-rates.csv. Originally in Excel spreadsheet format (original_data/20 years Net Timing Nisqually Clipped Unclipped Chinook.xlsx), transformed to tidy format in scripts/tidy_net_mark_rates.R, and saved to cleaned_data folder.
 
 ```{r}
-data_tribal_net <- readr::read_csv(here("cleaned_data/tidy_net_mark_rates.csv"))
+#import treaty net data
+data_treaty_net <- readr::read_csv("./cleaned_data/tidy_20-years-net-mark-rates.csv")
 
-data_tribal_net |> 
-  filter(fate == "Kept") |> 
-  group_by(year, fin_mark) |> 
-  summarize(count = sum(fish_count, na.rm = T))
+#create date data frame
+all_dates <- tibble(date = seq(as.Date("2004-01-01"), as.Date("2024-12-31"), by = "day"))
 
-data_tribal_net |> 
-  filter(fate == "Released") |> 
-  group_by(year, fin_mark) |> 
-  summarize(count = sum(fish_count, na.rm = T))
-
-#format tribal net data
-data_tribal_net <- data_tribal_net |> 
+#add cr
+all_dates <- all_dates |> 
   dplyr::mutate(
-    fate = dplyr::case_when(
-      fate == "released" ~ "Released",
-      fate == "kept" ~ "Kept",
-      TRUE ~ fate
-    ),
-    fin_mark = dplyr::case_when(
-      fin_mark == "ad" ~ "AD",
-      fin_mark == "um" ~ "UM",
-      TRUE ~ fin_mark
-    )
-  ) |> 
-  dplyr::rename(fish_count = catch)
+    management_week = framrsquared::management_week(date)
+  )
 
 #filter creel catch data to Chinook
 data_creel_catch_Chinook <- catch |> 
   dplyr::filter(species == "Chinook",
                 life_stage == "Adult") |> 
   #format to match tribal net dataframe
-  dplyr::select(fin_mark, fate, fish_count, event_date, year)
+  dplyr::select(fin_mark, fate, fish_count, date = event_date, year)
 
-#take tribal stat_weeks and parse into dates by year
-#join this with creel data to assign the same time periods to stat weeks
-stat_weeks <- data_tribal_net |> 
-  dplyr::select(year, stat_week, day_interval) |>
-  dplyr::mutate(
-    day_interval = dplyr::case_when(
-      day_interval == "10/33-11/06" ~ "10/31-11/06", #fixing error in dates
-      TRUE ~ day_interval 
-    ),
-    # Extract and parse start and end dates
-    start_date = lubridate::mdy(paste0(sub("-.*", "", day_interval), "/", year)),
-    end_date = lubridate::mdy(paste0(sub(".*-", "", day_interval), "/", year))
-  ) |> 
-  dplyr::select(-day_interval) |> 
-  dplyr::distinct()
-
-## potential problem: IS THE CREEL DATA AGGREGATED DAILY?
-stat_weeks$event_date = purrr::map2(.x = stat_weeks$start_date, .y = stat_weeks$end_date, \(x, y) seq(x, y, by = "day"))
-
-stat_weeks = stat_weeks |> 
-  unnest(event_date)
-
-#assign stat week to creel data
+#join management weeks with creel data
 data_creel_catch_Chinook <- data_creel_catch_Chinook |> 
-  dplyr::left_join(stat_weeks, by = c("year", "event_date"))|> 
-  dplyr::select(-start_date, -end_date, -event_date) |> 
-  dplyr::mutate(source = "creel")
+  dplyr::left_join(all_dates, by = "date")
 
-#make id col
-data_tribal_net <- data_tribal_net |> 
-  dplyr::mutate(source = "treaty") |> 
-  dplyr::select(-day_interval)
-
-#combine rec creel and tribal net data
-data_combined <- dplyr::bind_rows(data_creel_catch_Chinook, data_tribal_net)
-
-#calculate mark rate
-mark_rates <- data_combined |> 
+#calc mark rates for creel data
+data_creel_catch_Chinook <- data_creel_catch_Chinook |> 
   dplyr::filter(!fin_mark == "UNK") |> 
-  dplyr::group_by(source, year, stat_week) |> 
+  dplyr::group_by(management_week, year) |> 
   dplyr::summarize(
     total_fish = sum(fish_count, na.rm = TRUE),
     ad_fish = sum(fish_count[fin_mark == "AD"], na.rm = TRUE),
     mark_rate = round( ad_fish / total_fish, 2)
   ) |> 
-  dplyr::filter(!is.na(mark_rate)) |> 
-  dplyr::ungroup()
+  dplyr::ungroup() |> 
+  dplyr::arrange(year, management_week) |> 
+  dplyr::mutate(data_source = "creel")
 
-#plot
+#calc mark rates for treaty data
+data_treaty_net <- data_treaty_net |> 
+  dplyr::group_by(year, week) |> 
+  dplyr::summarise(
+    total_fish = sum(catch, na.rm = T),
+    ad_fish = sum(catch[fin_mark == "AD"], na.rm = T),
+    mark_rate = round(ad_fish / total_fish, 2)
+  ) |> 
+  dplyr::mutate(data_source = "treaty") |> 
+  dplyr::rename(management_week = week)
+
+#combine
+mark_rates <- rbind(data_treaty_net, data_creel_catch_Chinook)
+
+```
+
+```{r}
+#plot mark rate comparison
 mark_rates |> 
-  ggplot2::ggplot(aes(x = stat_week, y = mark_rate, col = source)) +
+  dplyr::filter(year %in% c("2021", "2022", "2023")) |> 
+  ggplot2::ggplot(aes(x = management_week, y = mark_rate, col = data_source)) +
   ggplot2::geom_point(size = 2) +
-  ggplot2::scale_x_continuous(limits=c(min(mark_rates$stat_week)-1, max(mark_rates$stat_week)), n.breaks = 15) +
+  ggplot2::scale_x_continuous(limits=c(min(mark_rates$management_week)-1, max(mark_rates$management_week)), n.breaks = 15) +
   facet_wrap(.~ year, ncol = 1)+
   theme_bw()
 
+```
 
+```{r}
+#original attempt at comparing mark rates with wrong input file
+# data_tribal_net <- readr::read_csv(here("cleaned_data/tidy_net_mark_rates.csv"))
+# 
+# data_tribal_net |> 
+#   filter(fate == "Kept") |> 
+#   group_by(year, fin_mark) |> 
+#   summarize(count = sum(fish_count, na.rm = T))
+# 
+# data_tribal_net |> 
+#   filter(fate == "Released") |> 
+#   group_by(year, fin_mark) |> 
+#   summarize(count = sum(fish_count, na.rm = T))
+# 
+# #format tribal net data
+# data_tribal_net <- data_tribal_net |> 
+#   dplyr::mutate(
+#     fate = dplyr::case_when(
+#       fate == "released" ~ "Released",
+#       fate == "kept" ~ "Kept",
+#       TRUE ~ fate
+#     ),
+#     fin_mark = dplyr::case_when(
+#       fin_mark == "ad" ~ "AD",
+#       fin_mark == "um" ~ "UM",
+#       TRUE ~ fin_mark
+#     )
+#   ) |> 
+#   dplyr::rename(fish_count = catch)
+
+#combined data frames
+
+#take tribal stat_weeks and parse into dates by year
+#join this with creel data to assign the same time periods to stat weeks
+# stat_weeks <- data_tribal_net |> 
+#   dplyr::select(year, stat_week, day_interval) |>
+#   dplyr::mutate(
+#     day_interval = dplyr::case_when(
+#       day_interval == "10/33-11/06" ~ "10/31-11/06", #fixing error in dates
+#       TRUE ~ day_interval 
+#     ),
+#     # Extract and parse start and end dates
+#     start_date = lubridate::mdy(paste0(sub("-.*", "", day_interval), "/", year)),
+#     end_date = lubridate::mdy(paste0(sub(".*-", "", day_interval), "/", year))
+#   ) |> 
+#   dplyr::select(-day_interval) |> 
+#   dplyr::distinct()
+
+## potential problem: IS THE CREEL DATA AGGREGATED DAILY?
+# stat_weeks$event_date = purrr::map2(.x = stat_weeks$start_date, .y = stat_weeks$end_date, \(x, y) seq(x, y, by = "day"))
+# 
+# stat_weeks = stat_weeks |> 
+#   unnest(event_date)
+
+# #assign stat week to creel data
+# data_creel_catch_Chinook <- data_creel_catch_Chinook |> 
+#   dplyr::left_join(stat_weeks, by = c("year", "event_date"))|> 
+#   dplyr::select(-start_date, -end_date, -event_date) |> 
+#   dplyr::mutate(source = "creel")
+# 
+# #make id col
+# data_tribal_net <- data_tribal_net |> 
+#   dplyr::mutate(source = "treaty") |> 
+#   dplyr::select(-day_interval)
+# 
+# #combine rec creel and tribal net data
+# data_combined <- dplyr::bind_rows(data_creel_catch_Chinook, data_tribal_net)
+
+#calculate mark rate
+# mark_rates <- data_combined |> 
+#   dplyr::filter(!fin_mark == "UNK") |> 
+#   dplyr::group_by(source, year, stat_week) |> 
+#   dplyr::summarize(
+#     total_fish = sum(fish_count, na.rm = TRUE),
+#     ad_fish = sum(fish_count[fin_mark == "AD"], na.rm = TRUE),
+#     mark_rate = round( ad_fish / total_fish, 2)
+#   ) |> 
+#   dplyr::filter(!is.na(mark_rate)) |> 
+#   dplyr::ungroup()
 
 ```
 
 ### More details
 
-Collin has already written a function to calculate 95% confidence intervals from individual weekly samples of binomial data. This primarily uses the assymptotic method to calculate the confidence intervals in logit space and then transforms them back. When one of the two classes has 0 observations (e.g. entirely marked or unmarked fish in a week), 
-the assymptotic method breaks down. In that case, the function instead uses likelihood profiling. 
+Collin has already written a function to calculate 95% confidence intervals from individual weekly samples of binomial data. This primarily uses the assymptotic method to calculate the confidence intervals in logit space and then transforms them back. When one of the two classes has 0 observations (e.g. entirely marked or unmarked fish in a week), the assymptotic method breaks down. In that case, the function instead uses likelihood profiling.
 
 Code can also be found here: https://github.com/FRAMverse/snippets/blob/main/R/confint-fromsample.R.
 
@@ -560,16 +611,12 @@ gp.mr.2023/gp.props.2023 & plot_annotation(title = "2023 comparison of mark rate
 
 ```
 
-
-
 Data frame containing both the creel data and tribal net data.
 
 ::: {.scroll-container style="overflow-y: auto; height: 300px;"}
-
 ```{r}
 data_combined |> 
   dplyr::relocate(source, year, stat_week, fin_mark, fate, fish_count) |> 
   gt::gt()
 ```
-
 :::

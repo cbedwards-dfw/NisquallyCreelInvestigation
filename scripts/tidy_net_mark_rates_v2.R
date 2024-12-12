@@ -14,6 +14,8 @@ data_raw <- janitor::clean_names(data_raw)
 #initialize data_processing intermediary
 data_processing <- data_raw
 
+weeks <- c(29:46)
+
 #trim first row
 data_trim <- data_processing |> dplyr::slice(-1)
 

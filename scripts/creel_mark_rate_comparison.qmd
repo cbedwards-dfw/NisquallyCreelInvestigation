@@ -1,0 +1,100 @@
+---
+title: "creel_mark_rate_comparison"
+editor: visual
+---
+
+# packages
+
+```{r}
+library("CreelEstimateR")
+library("suncalc")
+library("tidyverse")
+library("patchwork")
+library("gt")
+library("here")
+library("mgcv")
+library("gratia")
+library("framrsquared")
+library("cli")
+library("here")
+```
+
+
+### mark rates using catch estimates 
+
+```{r}
+
+# read in creel catch estimates for the 2023 Nisqually
+
+# catch estimates calculated for total encounters of ALL adult Chinook
+estimates_total_encounters <- readr::read_csv(here("cleaned_data/creel_estimates", "model_estimates_stratum_s1s2_total_encounters.csv"))
+
+# catch estimates calculated for total encounters of only AD-clipped (marked) adult Chinook
+estimates_ad_encounters <- readr::read_csv(here("cleaned_data/creel_estimates", "model_estimates_stratum_ad_encounters.csv"))
+
+# bind together and filter to outputs generated with the Bayesian state space model 
+combined <- estimates_total_encounters |> rbind(estimates_ad_encounters) |> 
+  filter(model_type == "BSS" & estimate_category == "catch") |>  
+  select(event_date = min_event_date, section_num, period, day_type, angler_final, est_cg,
+         estimate_category, estimate_type, estimate_value) |> 
+  dplyr::mutate(
+    management_week = framrsquared::management_week(event_date)
+  ) |> 
+  pivot_wider(names_from = estimate_type, values_from = estimate_value)
+
+# think about calculating study design strata level mark rates - could show that certain strata align with net data, while other do not! 
+
+catch_totals <- combined |> 
+  group_by(section_num, angler_final, est_cg) |> 
+   summarise(
+    total = sum(mean)
+  )
+
+# look at weekly mark rates calculated using expanded catch estimates
+
+combined |> select(event_date, management_week, section_num, day_type, angler_final, est_cg, mean) |> 
+  filter(section_num == 1) |> 
+  group_by(management_week, section_num, angler_final, est_cg) |> 
+   summarise(
+    total = sum(mean)
+  ) |> 
+  pivot_wider(names_from = est_cg, values_from =  total) |> 
+  rename(total_ad_encounters = `Chinook_Adult_AD_Kept|Released`, total_encounters = `Chinook_Adult_AD|UM|UNK_Kept|Released`) |> 
+  mutate(
+    mark_rate = total_ad_encounters/total_encounters
+  ) |> 
+  ggplot(aes(management_week, mark_rate, fill = angler_final, color = angler_final)) +
+  geom_point(size = 2) +
+  scale_y_continuous(limits = c(0,1))
+
+# plotting by angler type, there appears to be a systematic offset between bank and boat, similar to the net vs. sport pattern?
+
+```
+
+```{r}
+
+# test out the use of the newly packaged up fetch_dwg function, creating a vector of the names of the Nisqually fisheries we want to pull into R
+
+# define fisheries we want data for
+fisheries <- c("Nisqually salmon 2021", "Nisqually salmon 2022", "Nisqually salmon 2023")
+
+# download the data from data.wa.gov
+datapull <- set_names(fisheries) |> 
+  map(~fetch_dwg(fishery_name = .x))
+
+interviews <- datapull$`Nisqually salmon 2023`$interview |> 
+  bind_rows(datapull$`Nisqually salmon 2022`$interview, datapull$`Nisqually salmon 2021`$interview)
+
+# bind date and waterbody data to the creel interview-based catch records
+catch <- datapull$`Nisqually salmon 2023`$catch |> 
+  bind_rows(datapull$`Nisqually salmon 2022`$catch, datapull$`Nisqually salmon 2021`$catch) |>
+  left_join(interviews |> 
+              select(interview_id, event_date, water_body),
+            by = "interview_id") |> 
+  mutate(
+    year = year(event_date),
+    month = month(event_date)
+  )
+
+
+```

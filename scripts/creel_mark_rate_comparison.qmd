@@ -19,8 +19,7 @@ library("cli")
 library("here")
 ```
 
-
-### mark rates using catch estimates 
+### mark rates using catch estimates
 
 ```{r}
 
@@ -41,6 +40,10 @@ combined <- estimates_total_encounters |> rbind(estimates_ad_encounters) |>
     management_week = framrsquared::management_week(event_date)
   ) |> 
   pivot_wider(names_from = estimate_type, values_from = estimate_value)
+
+# CE - check out the "combined" object, these are daily catch estimates grouped into two catch groups, "total encounters" - daily catch estimates (i.e., expanded for effort) aggregating Chinook catch over UM,AD,UNK mark status for both released and harvested fish, and "ad encounters" - daily catch estimates (i.e., expanded for effort) aggregating catch for only AD-clipped fish, both released and harvested. 
+
+# CE-  can we accurately propagate error when calculating daily mark rates from these two quantities, given the statistics available?
 
 # think about calculating study design strata level mark rates - could show that certain strata align with net data, while other do not! 
 
@@ -67,7 +70,9 @@ combined |> select(event_date, management_week, section_num, day_type, angler_fi
   geom_point(size = 2) +
   scale_y_continuous(limits = c(0,1))
 
-# plotting by angler type, there appears to be a systematic offset between bank and boat, similar to the net vs. sport pattern?
+# plotting by angler type, there appears to be a systematic offset between bank and boat, similar to the net vs. sport pattern??
+
+# by viewing the data in light of the design strata, are there clues as to where potential bias are introduced in the data, regarding angler type, time period, or spatial area?
 
 ```
 
@@ -76,25 +81,25 @@ combined |> select(event_date, management_week, section_num, day_type, angler_fi
 # test out the use of the newly packaged up fetch_dwg function, creating a vector of the names of the Nisqually fisheries we want to pull into R
 
 # define fisheries we want data for
-fisheries <- c("Nisqually salmon 2021", "Nisqually salmon 2022", "Nisqually salmon 2023")
-
-# download the data from data.wa.gov
-datapull <- set_names(fisheries) |> 
-  map(~fetch_dwg(fishery_name = .x))
-
-interviews <- datapull$`Nisqually salmon 2023`$interview |> 
-  bind_rows(datapull$`Nisqually salmon 2022`$interview, datapull$`Nisqually salmon 2021`$interview)
-
-# bind date and waterbody data to the creel interview-based catch records
-catch <- datapull$`Nisqually salmon 2023`$catch |> 
-  bind_rows(datapull$`Nisqually salmon 2022`$catch, datapull$`Nisqually salmon 2021`$catch) |>
-  left_join(interviews |> 
-              select(interview_id, event_date, water_body),
-            by = "interview_id") |> 
-  mutate(
-    year = year(event_date),
-    month = month(event_date)
-  )
+# fisheries <- c("Nisqually salmon 2021", "Nisqually salmon 2022", "Nisqually salmon 2023")
+# 
+# # download the data from data.wa.gov
+# datapull <- set_names(fisheries) |>
+#   map(~fetch_dwg(fishery_name = .x))
+# 
+# interviews <- datapull$`Nisqually salmon 2023`$interview |>
+#   bind_rows(datapull$`Nisqually salmon 2022`$interview, datapull$`Nisqually salmon 2021`$interview)
+# 
+# # bind date and waterbody data to the creel interview-based catch records
+# catch <- datapull$`Nisqually salmon 2023`$catch |>
+#   bind_rows(datapull$`Nisqually salmon 2022`$catch, datapull$`Nisqually salmon 2021`$catch) |>
+#   left_join(interviews |>
+#               select(interview_id, event_date, water_body),
+#             by = "interview_id") |>
+#   mutate(
+#     year = year(event_date),
+#     month = month(event_date)
+#   )
 
 
 ```

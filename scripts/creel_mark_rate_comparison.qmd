@@ -159,9 +159,9 @@ ggplot(aes(x = event_date, y = quantile_median_50, fill = est_cg, color = est_cg
     theme_bw() +
     facet_wrap(~section_num + angler_final)
 
-# UM released and AD encounters track closely - is a high proportion of the UM Chinook catch unmarked hatchery fish?
+# UM released and AD encounters track closely - is a significant proportion of the UM Chinook catch unmarked hatchery fish? 
 # generate catch estimates for pinks and plot them here?
-# generate catch estimates for AD Kept Chinook - these would be considered fairly reliable due to sampling
+# generate catch estimates for AD Kept Chinook - these would be considered more reliable due to sampling
 
 ```
 

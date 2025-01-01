@@ -31,8 +31,11 @@ estimates_total_encounters <- readr::read_csv(here("cleaned_data/creel_estimates
 # catch estimates calculated for total encounters of only AD-clipped (marked) adult Chinook
 estimates_ad_encounters <- readr::read_csv(here("cleaned_data/creel_estimates", "model_estimates_stratum_ad_encounters.csv"))
 
+# catch estimates calculated for total encounters of only UM (unmarked) released adult Chinook
+estimates_UM_released <- readr::read_csv(here("cleaned_data/creel_estimates", "model_estimates_stratum_um_released.csv"))
+
 # bind together and filter to outputs generated with the Bayesian state space model 
-combined <- estimates_total_encounters |> rbind(estimates_ad_encounters) |> 
+combined <- estimates_total_encounters |> rbind(estimates_ad_encounters, estimates_UM_released) |> 
   filter(model_type == "BSS" & estimate_category == "catch") |>  
   select(event_date = min_event_date, section_num, period, day_type, angler_final, est_cg,
          estimate_category, estimate_type, estimate_value) |> 
@@ -47,14 +50,77 @@ combined <- estimates_total_encounters |> rbind(estimates_ad_encounters) |>
 
 # think about calculating study design strata level mark rates - could show that certain strata align with net data, while other do not! 
 
-catch_totals <- combined |> 
-  group_by(section_num, angler_final, est_cg) |> 
+total_mark_rates <- combined |> 
+  group_by(est_cg) |> 
    summarise(
     total = sum(mean)
+  ) |> 
+   pivot_wider(names_from = est_cg, values_from =  total) |> 
+  rename(total_ad_encounters = `Chinook_Adult_AD_Kept|Released`, total_encounters = `Chinook_Adult_AD|UM|UNK_Kept|Released`) |> 
+  mutate(
+    mark_rate = total_ad_encounters/total_encounters
   )
 
-# look at weekly mark rates calculated using expanded catch estimates
+stratum_total_mark_rates <- combined |> 
+  group_by(section_num, day_type, angler_final, est_cg) |> 
+   summarise(
+    total = sum(mean)
+  ) |> 
+   pivot_wider(names_from = est_cg, values_from =  total) |> 
+  rename(total_ad_encounters = `Chinook_Adult_AD_Kept|Released`, total_encounters = `Chinook_Adult_AD|UM|UNK_Kept|Released`) |> 
+  mutate(
+    mark_rate = total_ad_encounters/total_encounters
+  )
 
+# looks like bank catch is has a consistently lower mark rate than boat catch
+
+weekly_catch_mark_rate <- combined |> 
+  group_by(management_week, section_num, angler_final, est_cg) |> 
+   summarise(
+    total = sum(mean)
+  ) |> 
+  pivot_wider(names_from = est_cg, values_from =  total) |> 
+  rename(total_ad_encounters = `Chinook_Adult_AD_Kept|Released`, total_encounters = `Chinook_Adult_AD|UM|UNK_Kept|Released`) |> 
+  mutate(
+    mark_rate = total_ad_encounters/total_encounters
+  )
+
+weekly_catch_mark_rate |> 
+  filter(section_num == 1) |> 
+  ggplot(aes(management_week, mark_rate)) +
+  geom_point() +
+  facet_wrap(vars(section_num, angler_final))
+
+catch_totals_weekly |> 
+  filter(section_num == 2) |> 
+  filter(!(section_num == 2 & angler_final == "Bank")) |> 
+  ggplot(aes(management_week, mark_rate)) +
+  geom_point() +
+  facet_wrap(vars(section_num, angler_final))
+
+
+### look at weekly mark rates calculated using expanded catch estimates
+
+# create plots to examine potential patterns in catch/mark rate by design strata: section_num (area), day_type (weekday/weekend), anger_final (bank vs boat angler)
+
+# aggregating over section_num and angler_final
+combined |> select(event_date, management_week, section_num, day_type, angler_final, est_cg, mean) |> 
+  filter(section_num == 1) |> 
+  group_by(management_week, est_cg) |> 
+   summarise(
+    total = sum(mean)
+  ) |> 
+  pivot_wider(names_from = est_cg, values_from =  total) |> 
+  rename(total_ad_encounters = `Chinook_Adult_AD_Kept|Released`, total_encounters = `Chinook_Adult_AD|UM|UNK_Kept|Released`) |> 
+  mutate(
+    mark_rate = total_ad_encounters/total_encounters
+  ) |> 
+  ggplot(aes(management_week, mark_rate)) +
+  geom_point(size = 2) +
+  scale_y_continuous(limits = c(0,1))
+
+
+# plotted by angler type 
 combined |> select(event_date, management_week, section_num, day_type, angler_final, est_cg, mean) |> 
   filter(section_num == 1) |> 
   group_by(management_week, section_num, angler_final, est_cg) |> 
@@ -75,6 +141,57 @@ combined |> select(event_date, management_week, section_num, day_type, angler_fi
 # by viewing the data in light of the design strata, are there clues as to where potential bias are introduced in the data, regarding angler type, time period, or spatial area?
 
 ```
+
+
+
+```{r}
+# plot daily catch time series for three catch groups to visualize mark rate dynamics over time
+combined |> 
+  # filter(est_cg %in% c("Chinook_Adult_UM_Released", "Chinook_Adult_AD_Kept|Released", "Chinook_Adult_AD|UM|UNK_Kept|Released)) |> 
+  filter(section_num == 1 & angler_final == "Bank") |> 
+ggplot(aes(x = event_date, y = quantile_median_50, fill = est_cg, color = est_cg)) +
+    geom_ribbon(aes(ymin = quantile_lower_2_5, ymax = quantile_upper_97_5), alpha = 0.2, color = "transparent") +
+    geom_line(lwd = 1) +
+    ylab("Median (50%) catch") +
+    xlab("Date") +
+    # labs(color = "Angler type", fill = "Angler type") +
+    scale_x_date() +
+    theme_bw() +
+    facet_wrap(~section_num + angler_final)
+
+# UM released and AD encounters track closely - is a high proportion of the UM Chinook catch unmarked hatchery fish?
+# generate catch estimates for pinks and plot them here?
+# generate catch estimates for AD Kept Chinook - these would be considered fairly reliable due to sampling
+
+```
+
+
+```{r}
+
+# this may be done incorrectly, ignore for now! 
+
+# strata_compare <- combined |> select(event_date, management_week, section_num, day_type, angler_final, est_cg, mean) |>
+#   filter(!(section_num == 2 & angler_final == "Bank")) |> 
+#   mutate(
+#     section_num = as.factor(section_num),
+#     day_type = as.factor(day_type),
+#     angler_final = as.factor(angler_final)
+#   ) |> 
+#   pivot_wider(names_from = est_cg, values_from =  mean) |> 
+#    rename(ad_encounters = `Chinook_Adult_AD_Kept|Released`, total_encounters = `Chinook_Adult_AD|UM|UNK_Kept|Released`) |> 
+#   mutate(
+#     mark_rate = ad_encounters/total_encounters
+#   )
+# 
+# strata_compare |> 
+#   pivot_longer(cols = c(section_num, day_type, angler_final), names_to = "design_strata", values_to = "strata_levels") |> 
+#   ggplot(aes(mark_rate, strata_levels)) +
+#   geom_boxplot() +
+#   facet_wrap(.~design_strata)
+
+
+```
+
 
 ```{r}
 

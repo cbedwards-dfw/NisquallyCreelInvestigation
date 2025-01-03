@@ -58,7 +58,6 @@ How was data collected across years? What were key consistencies and changes mad
 
 Across the three-year monitoring period the implementation of the WDFW roving creel design underwent refinement regarding aspects of data collection across the primary data components representing effort and interview data. This includes how data was collected and what specific information was captured during survey activities.
 
-
 ## Interview data
 
 Methods to conduct angler interviews to quantify catch rate were largely consistent over the three-year period.
@@ -125,6 +124,4 @@ interviews |>
 
 Notes
 
- is there any pattern to the reporting in anglers whom refuse to provide zip codes? is zip code a litmus test on "more honest" reporting? in more simple terms, are there systematic differences in catch rate between anglers who:
- 1) report zip code and those who refuse
- 2) for the subset who do report, is there a relationship between distance traveled and catch rate? then subsequently, joined catch per interview for specific catch groups to evaluate patterns in CPUE 
+is there any pattern to the reporting in anglers whom refuse to provide zip codes? is zip code a litmus test on "more honest" reporting? in more simple terms, are there systematic differences in catch rate between anglers who: 1) report zip code and those who refuse 2) for the subset who do report, is there a relationship between distance traveled and catch rate? then subsequently, joined catch per interview for specific catch groups to evaluate patterns in CPUE

@@ -54,10 +54,21 @@ data_pivot <- data_pivot |>
   )
 
 #replace NAs with zero
+# leave original version (including NAs) available for timeseries analysis
+# add in special designation for the three weeks that were drift gill nets.
 data_final <- data_pivot |> 
-  dplyr::mutate(catch = ifelse(
-    is.na(catch), 0, catch
-  ))
+  dplyr::mutate(catch_original = catch,
+                catch = ifelse(
+                  is.na(catch), 0, catch
+                ))
+## Per convo with Craig: week 37 of 2023 and 2024 and week 38 of 2023 were drift gill nets, and should be viewed a bit differently.
+data_insert = 
+  tribble(~year, ~week, ~notes,
+          2023, "37", "drift gill net",
+          2023, "38", "drift gill net", 
+          2024, "37", "drift gill net")
+data_final = data_final |> 
+  left_join(data_insert, by = c("year", "week"))
 
 #write out formatted data frame
 readr::write_csv(data_final, file = "./cleaned_data/tidy_20-years-net-mark-rates.csv")

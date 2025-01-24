@@ -1,0 +1,344 @@
+---
+title: "Distribution explainer"
+author: "Collin Edwards"
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(mgcv)
+library(gt)
+library(patchwork)
+
+set.seed(10)
+```
+
+
+In looking for bias in the Nisqually Creel data, one of our most powerful tools is to fit 
+a plausible model to the data, and then look to see if the pattern of interview data really differs
+from the model expectations. This framework allows us to ask questions like "Do we see many more 
+interviews reporting counts of 5 or 10 fish than we would expect to?" (rounding bias) and
+"Do we see interviews with unexpectedly high counts of unmarked fish which had no marked fish" (possible
+prestige bias). Since I found some of the steps involved really complicated to work out, I thought I should explain them with examples.
+
+A fundamental step in this process (and the part I found hard to work out) is to use the model to predict what we *expect* to see in the data (under the assumption that the model is reasonable). R modeling packages provide `predict()` functions that
+allow us to generate model predictions for any set of predictors (e.g., any real or artificial datapoints), but we end up needing to go beyond this. Let's start by building intuition with a toy scenario.
+
+## Toy model: lengths vs age
+
+Let's imagine that we have a dataset of fork length and age of fish. Let's generate 1000 data points in which there is
+a linear relationship between age and fin length. I'll plot the distribution of ages, and then the relationship between length and age for the simulated data set.
+
+```{r}
+## generate normal data: first generate ages, with somewhat fiewer 4 and 5 year olds
+dat = data.frame(age = sample(1:5, size = 1000, prob = c(1,1,1, .5, .3), replace = T))
+dat$length = rnorm(n = nrow(dat), mean = 30 + dat$age*15, sd = 10)
+```
+
+```{r}
+dat |> 
+  count(age) |> 
+  ggplot(aes(x = age, y = n))+
+  geom_col()+
+  ylab("frequency")+
+  ggtitle("Distribution of ages")+
+  theme_bw(base_size = 14)
+
+dat |> 
+  ggplot(aes(x = age, y = length))+
+  geom_jitter(width = .2)+
+  ggtitle("Jitterplot of length vs age")+
+  theme_bw(base_size = 14)
+```
+
+Now let's imagine that several of the datapoints are wrong, but they are only obvious as outliers in context. Our largest length is `r round(max(dat$length), 2)`. Let's create a problem with the data: we'll add three "problem" data points of age 1s with this largest length. Note that these problem data points have values that don't stand out individually (the length is within what we already saw, the age is within what we already saw), *but* the specific combination of values for our three problem data points are very unlikely. With data this simple we can see the problem with our eyes. 
+
+```{r}
+data.bad = data.frame(age = c(1, 1, 1),
+                      length = rep(max(dat$length), 3))
+dat = rbind(dat,
+            data.bad)
+
+
+dat |> 
+  ggplot(aes(x = age, y = length))+
+  geom_jitter(width = .2)+
+  ggtitle("Jitterplot of length vs age with our problem data")+
+  theme_bw(base_size = 14)
+```
+
+However, let's imagine the data is more complicated; in that case, it can be very helpful to use a model to help us identify what we might expect to see, so that we can spot the outliers. We will fit a linear regression model to the data.
+
+```{r}
+out = lm(length ~ age, data = dat)
+```
+
+We can ask what the model predicts the length to be for each data point -- since the model has only age as a predictor, all data points with the same age should have the same prediction (but they'll look slightly variable in a jitterplot).
+
+```{r}
+dat$prediction = predict(out, newdata = dat, type = "response")
+
+
+dat |> 
+  ggplot(aes(x = age, y = prediction))+
+  geom_jitter(width = .2)+
+  ggtitle("Jitterplot of model prediction of lengths")+
+  ylab("predicted length")
+  theme_bw(base_size = 14)
+
+```
+
+We can also look at how far off each observation was from the prediction, known as the "residual":
+
+```{r}
+dat$residual = out$residuals
+
+dat |> 
+  ggplot(aes(x = age, y = residual))+
+  geom_jitter(width = .2)+
+  ggtitle("Jitterplot of residuals")+
+  theme_bw(base_size = 14)
+```
+
+The residuals help us to see the three problem observations, as they are much further from the expected values than anything else.
+
+This toy model looks at a *continuous response variable*; that is, fish length was a continuous variable. Linear regression assumes that error is normally distributed, so for each age, the fitted model assumes that lengths should be normally distributed around some expected value (and the model estimates that expected value). 
+
+So another thing we could do is ask "how does the model predictions of the distribution of fish lengths at a given size compare to the observed fish lengths at that size?" (Answering similar questions will be valuable for our analysis of the Nisqually creel data.) Let's start by looking at the age 5 distribution, using the model predicted mean and the residual standard deviation to  generate our predicted distribution.
+
+```{r}
+#estimate the sigma:
+out.sigma = summary(out)$sigma
+## using predict to obtain a dataframe of estimates
+dat.pred = data.frame(age = 1:5)
+out.means = predict(out, newdata = dat.pred, type = "response")
+
+## calculate the distribution for age 5s
+dist.plot = data.frame(length = seq(0, 200, by = .1))
+dist.plot$distribution = dnorm(dist.plot$length, mean = out.means[5], sd = out.sigma)
+
+## make our plot:
+ggplot(data = dat |> filter(age == 5),
+       aes(x = length))+
+  geom_histogram(aes(linetype = "observed", y = after_stat(density)))+
+  geom_path(data = dist.plot, 
+            aes(y = distribution,
+                linetype = "predicted")
+  )+
+  xlim(dat |> 
+         filter(age == 5) |> 
+         pull(length) |> 
+         range() + c(-10, 10))+
+  theme_bw()+
+  ggtitle("Predicted vs observed length distribution for age 5s")
+```
+
+We can see that the distribution of the observed data is pretty close to the model predictions, especially since the binning for the bars in these histograms often isn't fantastic.
+
+What if we make the same plot for age 1s?
+
+```{r}
+## calculate the distribution for age 1s
+dist.plot = data.frame(length = seq(0, 200, by = .1))
+dist.plot$distribution = dnorm(dist.plot$length, mean = out.means[1], sd = out.sigma)
+
+## make our plot:
+ggplot(data = dat |> filter(age == 1),
+       aes(x = length))+
+  geom_histogram(aes(linetype = "observed", y = after_stat(density)))+
+  geom_path(data = dist.plot, 
+            aes(y = distribution,
+                linetype = "predicted")
+  )+
+  xlim(dat |> 
+         filter(age == 1) |> 
+         pull(length) |> 
+         range() + c(-10, 10))+
+  theme_bw()+
+  ggtitle("Predicted vs observed length distribution for age 5s")
+```
+
+We see that clump of observed large lengths when the model predicts there should be about basically none. This is a powerful tool for looking for bias -- when we see things like these unexpected very high lengths, either some unlikely event occurred (which certainly can happen), the model is failing to capture some relevant biology, or the unexpected observations represent some kind of reporting problem (bias or otherwise). 
+
+## Dealing with discrete responses (like # of fish)
+
+In the example above, we were looking at length, which can take any positive value. For the Nisqually creel bias investigation, however, we are looking at the number of fish encountered, which has to be a whole number. This complicates things a fair bit, particularly when we are looking for outliers. 
+
+When working with ecological count data, it's often a good starting point to assume the data follows a negative binomial distribution (there's some great biological and statistical reasons for this -- happy to discuss elsewhere). For a given combination of predictor values, a model can predict the expected values, but this is just the mean value that we think we would get if we sampled a large number of data points with those same predictor values. We can dig a little deeper, and instead calculate the estimated probability of getting different numbers of predictors.
+
+As a concrete example, let's create another toy model, this time of the number of fish encountered in each of several areas. We'll assume the number of fish caught follows a negative binomial distribution, and each area has a different mean number of fish caught. We'll assume areas "A", "B", and "C" have mean fish caught of 0.8, 3, and 2, and that the dispersion parameter (a key part of the negative binomial distribution) has a value of 3.
+
+```{r}
+
+dat = data.frame(area = rep(c("A", "B", "C"), each = 500))
+## adding on the true means `mu` to simplify calculations
+true_means = data.frame(area = c("A", "B", "C"), mu = c(.8, 3, 2))
+dat = left_join(dat, true_means)
+dat$fish = rnbinom(n = nrow(dat),
+                   size = 3,
+                   mu = dat$mu
+)
+## removing the true means from the dataframe, since those aren't things we actually have in our data
+dat = dat |> 
+  select(-mu)
+```
+
+
+```{r}
+dat |> 
+  count(area, fish) |> 
+  ggplot(aes(x = fish, y = n))+
+  geom_col()+
+  facet_wrap(.~area)+
+  ggtitle("Distribution of fish caught")+
+  theme_bw(base_size = 13)
+```
+
+
+Like before, let's add in three "problem" observations, each of them a record for area A in which 10 fish were reported encountered.
+
+```{r}
+data.problem = data.frame(area = c("A", "A", "A"),
+                          fish = c(10, 10, 10))
+dat = rbind(dat, 
+            data.problem)
+
+dat |> 
+  count(area, fish) |> 
+  ggplot(aes(x = fish, y = n))+
+  geom_col()+
+  facet_wrap(.~area)+
+  ggtitle("Distribution of fish caught including problems")+
+  theme_bw(base_size = 13)
+```
+
+As before, we can fit a model to our data to try to identify what distribution of data we expect to see for each area. For consistency with the actual model used in the full analyses, I'm using the `mgcv` package and a `gam` model, but I'm only going to include fixed effects of area, so this will be equivalent to fitting a `glm` model from the `lme4` package.
+
+```{r}
+## note: mgcv doesn't like character variables -- need to explicitly make a factor version of the variable first
+dat$area.fac = factor(dat$area)
+
+## fit our simple model, using a negative binomial family (`family = nb`).
+out = gam(fish ~ area.fac,
+          family = 'nb', 
+          data = dat)
+```
+
+As before, we can predict what the model thinks we should see for each area. 
+
+```{r}
+dat.pred = data.frame(area = c("A", "B", "C"))
+dat.pred$area.fac = factor(dat.pred$area)
+dat.pred$predicted = predict(out, newdata = dat.pred, type = "response")
+
+dat |> 
+  count(area, fish) |> 
+  ggplot(aes(x = fish, y = n))+
+  geom_col()+
+  geom_vline(data = dat.pred,
+             aes(xintercept = predicted),
+             linetype = 2)+
+  facet_wrap(.~area)+
+  ggtitle("Distribution of fish, dashed lines are model predictions")+
+  theme_bw(base_size = 13)
+```
+
+The model predictions (dashed lines) are even less useful than before: the shape of our distributions don't have to be symmetrical, and it's entirely reasonable to have values pretty far from the expected one. As examples, look at areas B and C. They have no problem data, and the data was generated from the same distribution as the model assumes, so the model should be fitting them fantastically. However, we can see the distributions range quite far from the model predictions. 
+
+For similar reasons, the residuals aren't as helpful as they were for our toy model with a continuous response variable. 
+
+```{r}
+dat$residuals = dat$fish - predict(out, newdata = dat, type = 'response')
+
+ggplot(dat, aes (x = area, y = residuals))+
+  geom_jitter()+
+  theme_bw(base_size = 13)+
+  ggtitle("Residuals of negative binomial model")+
+  theme_bw(base_size = 13)
+```
+
+Remember that areas B and C are *good*, and yet the residuals don't look  qualitatively better than for area A, which we know has 3 problems in it. Clearly we can't rely on residuals for our investigation of the creel data.
+
+
+Like before, we need to dig deeper. From the fitted model, we can calculated the predicted *distribution* of fish counts for a given data point. If we had 100 samples identical to whichever data point we're looking at, the model can tell us how many of those would be records of 0 fish caught, or 1 fish caught, etc). 
+
+Let's start by calculating the distribution of a single data point in area A, based on the fitted model. 
+
+```{r}
+## obtain shape parameter, on response scale
+cur.theta <- out$family$getTheta(TRUE)
+
+pred.datapoint = data.frame(fish_encountered = 0:15, 
+                            probability = round(dnbinom(0:15, size = cur.theta, mu = dat.pred |> filter(area == "A") |> pull(predicted)), 4)
+)
+pred.datapoint |> 
+  gt()
+
+pred.datapoint |> 
+  ggplot(aes(x = fish_encountered, y = probability))+
+  geom_col()+
+  ylab("probability /\nexpected number of records with this many encounters")+
+  ggtitle("Model expectations for a single area A observation")+
+  theme_bw(base_size = 13)
+```
+
+This means that for a single data point from area A, we think it's most likely that we would see 0 fish encountered, and there are decreasing probabilities of seeing more and more fish encountered. Moreover, when we're building our expected distribution of fishes encountered, the data point we're looking at now now should count as `r round(pred.datapoint[1,2], 2)` data points that encountered 0 fish,  `r round(pred.datapoint[2,2], 2)` data points that encountered 1 fish, `r round(pred.datapoint[3,2], 2)` data points that encountered 2 fish, and so on.
+
+If we have 100 data points, we could calculate our model's expected distribution of fish encountered for those data points overall by calculating the distribution of each data point and then summing the probabilities for each count. In simple cases like presented here, we can calculate the expected frequencies of counts for area A by multiplying the predicted distribution of a single data point in area A by the total number of data points in area A. However, in our actual analyses we will be including additional predictors like the amount of time spent fishing and the day of year. Because of these additional terms, the exact predicted distribution of fish encountered will probably be different for every data point; because of that, we will need to sum the distributions across data points. 
+
+Here's our prediction for number of data points with different numbers of fish encountered if we looked at 100 data points from area 10.
+
+```{r}
+pred.datapoint |> 
+  ggplot(aes(x = fish_encountered, y = probability*100))+
+  geom_col()+
+  ylab("expected number of records with this many encounters")+
+  labs(title = "Model expectations for ten area A observations",
+       subtitle = "Sum of the distributions of ten separate observations")+
+  theme_bw(base_size = 13)
+```
+
+Scaling up, let's compare what we saw in total for area A with what the model expected to see.
+
+```{r}
+gp.obs = dat |> 
+  filter(area == "A") |> 
+  count(fish) |> 
+  ggplot(aes(x = fish, y = n))+
+  geom_col()+
+  ggtitle("Observed frequencies")+
+  theme_bw(base_size= 13)+
+  xlim(dat |> 
+         filter(area == "A") |> 
+         pull(fish) |> 
+         range() +
+         c(-1, 1))+
+theme_bw(base_size = 13)
+
+gp.pred = pred.datapoint |> 
+  ggplot(aes(x = fish_encountered, y = probability * sum(dat$area == "A")))+
+  geom_col()+
+  xlim(dat |> 
+         filter(area == "A") |> 
+         pull(fish) |> 
+         range() +
+         c(-1, 1))+
+  ylab("Predicted frequency")+
+  xlab("fish")+
+  labs(title = "Model expectations for Area A distribution")+
+  theme_bw(base_size = 13)
+
+gp.obs / gp.pred
+```
+
+Here we can see  that our model predictions seem to be pretty close to the observed distribution, *except* for those problem data points reporting 10 fish.
+
+## Wrapping up
+
+Hopefully this provides the motivation and intuition for the approach that I will be taking in the main analyses:
+
+1. Fit a model to the data, using a discrete probability distribution for the error (starting with the negative binomial, may explore others).
+2. For each observation, use the model to calculate the expected probability of the observation being 0, 1, 2, 3, ... fish. 
+3. For any given strata we're interested in, sum the model's predicted probabilities of getting 0 fish for each of the data points in that stratum. That's how many total records we expected to have that reported 0 fish. Repeat this with the expected probabilities of getting 1 fish, then 2 fish, etc, stopping when we're several fish past the maximum number we've seen in the data.
+4. Compare this predicted distribution to the distribution of the actual data, and look for discrepancies. For example, if there are many more observed counts of 5, 10, and 15 than in the predicted distribution, this might reflect a rounding bias.
+

@@ -21,13 +21,14 @@ datapull <- set_names(fisheries) |>
   map(~fetch_dwg(fishery_name = .x))
 
 interviews <- datapull$`Nisqually salmon 2023`$interview |> 
-  bind_rows(datapull$`Nisqually salmon 2022`$interview, datapull$`Nisqually salmon 2021`$interview)
+  bind_rows(datapull$`Nisqually salmon 2022`$interview, datapull$`Nisqually salmon 2021`$interview) |> 
+  mutate(fishing_duration_minutes = (fishing_end_time - fishing_start_time)/60)
 
 # bind date and waterbody data to the creel interview-based catch records
 catch <- datapull$`Nisqually salmon 2023`$catch |> 
   bind_rows(datapull$`Nisqually salmon 2022`$catch, datapull$`Nisqually salmon 2021`$catch) |>
   left_join(interviews |> 
-              select(interview_id, event_date, water_body),
+              select(interview_id, event_date, water_body, fishing_duration_minutes),
             by = "interview_id") |> 
   mutate(
     year = year(event_date),
@@ -65,3 +66,4 @@ combined <- estimates_total_encounters |> rbind(estimates_ad_encounters) |>
 
 write_csv(combined,
           here("cleaned_data/key_dataframes/bss_combined.csv"))
+

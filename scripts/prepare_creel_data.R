@@ -34,10 +34,57 @@ catch <- datapull$`Nisqually salmon 2023`$catch |>
     year = year(event_date),
     month = month(event_date),
     management_week = framrsquared::management_week(event_date)
-  )
+  ) 
 
 write_csv(catch,
           here("cleaned_data/key_dataframes/creel_interview_catch.csv"))
+
+## we have separate entries by fork length for measured catches. We don't want that for this.
+catch = catch |> 
+  group_by(interview_id, species, life_stage, fin_mark, fate,
+           event_date, water_body, fishing_duration_minutes, year, month, management_week) |> 
+  summarize(fish_count = sum(fish_count)) |> 
+  ungroup()
+
+
+## Create dataframe for chinook-only with all relevant 0s. 
+
+df.dummy = expand_grid(interviews |> 
+                         select(interview_id, event_date, water_body, fishing_duration_minutes) |> 
+                         filter(!is.na(interview_id)),
+                       species = "Chinook",
+                       life_stage = c("Adult", "Jack"),
+                       fin_mark = c("AD", "UM"),
+                       fate = c("Kept", "Released")) |> 
+  mutate(year = lubridate::year(event_date),
+         month = lubridate::month(event_date),
+         management_week = framrsquared::management_week(event_date))
+
+catch.zerod = catch |> 
+  filter(!is.na(interview_id)) |> 
+  filter(species == "Chinook") |> 
+  filter(fin_mark != "UNK")
+
+
+catch.zerod = catch.zerod |> 
+  full_join(df.dummy) |> 
+  mutate(fish_count = replace_na(fish_count, 0))
+## check uniques
+table(table(catch.zerod$interview_id)) 
+## all good!
+# interview.check = catch.zerod |>
+#   count(interview_id) |>
+#   filter(n>8) |>
+#   pull(interview_id)
+# catch.zerod |>
+#   filter(interview_id %in% interview.check) |>
+#   View()
+#   
+write_csv(catch.zerod,
+          here("cleaned_data/key_dataframes/creel_interview_catch_withzeros.csv"))
+
+
+
 
 ## Combine BSS results from Evan's runs-------------
 

@@ -11,11 +11,12 @@ library(mgcv)
 library(patchwork)
 library(gratia)
 
+## rerun the following to recreate the clean data
 if(FALSE){
   source(here("scripts/prepare_creel_data.R"))
 }
 
-raw = read_csv(here("cleaned_data/key_dataframes/creel_interview_catch.csv")) 
+raw = read_csv(here("cleaned_data/key_dataframes/creel_interview_catch_withzeros.csv")) 
 ## Note: problem with col 4 being interpretted as a T/F instead of char
 
 dat = raw |> 
@@ -26,10 +27,15 @@ dat.sum = dat |>
   group_by(interview_id, 
            life_stage, event_date, year, month, management_week, fishing_duration_minutes) |> 
   summarize(um = sum(fish_count[fin_mark == "UM"]),
-            ad = sum(fish_count[fin_mark == "AD"])) |> 
+            ad = sum(fish_count[fin_mark == "AD"]),
+            released = sum(fish_count[fate == "Released"]),
+            kept = sum(fish_count[fate == "Kept"]),
+            ) |> 
   ungroup() |> 
   mutate(had.ad = ad>0,
-         had.um = um>0)
+         had.um = um>0,
+         had.release = released>0,
+         had.kept = kept >0)
 
 ## for now, ignore jacks
 dat.sum = dat.sum |> 
@@ -39,14 +45,13 @@ dat.sum = dat.sum |>
 
 ## simplest approach: 
 
-facet_names <- c(`FALSE` = "Report no marked catch",
-                 `TRUE` = "Reported 1+ marked catch")
+facet_names <- c(`FALSE` = "Reported no kept fish",
+                 `TRUE` = "Reported 1+ kept fish")
 
 dat.sum |> 
-  mutate(had.ad = ad>0) |> 
-  ggplot(aes(x = um, fill = had.ad)) +
+  ggplot(aes(x = um, fill = had.kept)) +
   geom_histogram() +
-  facet_wrap(.~ had.ad,
+  facet_wrap(.~ had.kept,
              labeller = as_labeller(facet_names)) + 
   labs(x = "# reported unmarked chinook",
        y = "# of interviews",
@@ -54,37 +59,27 @@ dat.sum |>
   theme_bw(base_size = 14)+
   theme(legend.position = "none")
 
-## Wow. Note that this is missing a lot of real biological pattern. Ex: marked and unmarked fish have slightly different phenology 
-
 
 dat.fit = dat |> 
   filter(life_stage == "Adult") |> 
   filter(fin_mark %in% c("UM", "AD")) |> 
-  group_by(interview_id, fin_mark, event_date, year, month, fishing_duration_minutes) |>   summarize(fish_count = sum(fish_count)) |> 
+  group_by(interview_id, fin_mark, event_date, year, month, fishing_duration_minutes, fate) |>   
+  summarize(fish_count = sum(fish_count)) |> 
   ungroup() |> 
   ## need to collapse the data down a bit
   left_join(dat.sum |> 
-              select(interview_id, had.ad, had.um),
-            by = "interview_id")
-
-## need to fill in the 0s. There's probably a tidyverse way to do this, but we can do it the hard way too.
-
-dat.construct = dat.fit |> 
-  filter(interview_id %in% names(table(dat.fit$interview_id)[
-    table(dat.fit$interview_id)==1])) |> 
-  mutate(fish_count = 0) |> 
-  mutate(fin_mark = case_match(fin_mark,
-                               "UM" ~ "AD",
-                               "AD" ~ "UM"))
-
-
-dat.fit = rbind(dat.fit, dat.construct) |> 
+              select(interview_id, had.ad, had.um, had.release, had.kept),
+            by = "interview_id") |> 
   mutate(doy = yday(event_date),
          fin_mark = as.factor(fin_mark),
          had.ad = as.factor(had.ad),
          had.um = as.factor(had.um),
+         had.release = as.factor(had.release),
+         had.kept = as.factor(had.kept),
          yearfac = as.factor(year)) |> 
   filter(!is.na(fishing_duration_minutes))
+
+cli::cli_alert("Reminder: skipping observations with no reported fishing time. These are ~ 500 out of 63,500, so not super worried about it, but in theory we could replace those with the average time. Consult with Evan.")
 
 ## want to also have time on the water
 
@@ -116,12 +111,12 @@ ggplot(dat.res, aes(x = fish_count_UM, y = fish_count_predicted_int_UM, col = ha
 dat.res |> 
   ggplot(aes(x = fish_count_UM))+
   geom_histogram()+
-  facet_grid(. ~ had.ad)
+  facet_grid(. ~ had.kept)
 
 dat.res |> 
   ggplot(aes(x = fish_count_predicted_int_UM))+
   geom_histogram()+
-  facet_grid(. ~ had.ad)
+  facet_grid(. ~ had.kept)
 
 dat.res |> 
   count(fish_count_predicted_int_AD)
@@ -131,80 +126,80 @@ dat.res |>
 hist(dat.res$fish_count_predicted_AD)
 hist(dat.res$fish_count_AD)
 
-## sure looks like we have zero inflated data. Let's check out the nbinom2 family in glmmTMB
-
-library(glmmTMB)
-
-out.tmb = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs') + fishing_duration_minutes + (1 | yearfac) + (1 | interview_id),
-                  ziformula = ~ 1,
-                  family = "poisson",
-                  REML = TRUE,
-                  data = dat.fit)
-
-simulationOutput <- simulateResiduals(fittedModel = out.tmb, plot = F)
-plot(simulationOutput)
-
-dat.fit$fish_count_predicted = as.numeric(predict(out.tmb, newdata = dat.fit, type = "response"))
-dat.fit = dat.fit |> 
-  mutate(fish_count_predicted_int = round(fish_count_predicted))
-
-dat.res = dat.fit |> 
-  pivot_wider(names_from = fin_mark,
-              values_from = c(fish_count, fish_count_predicted, fish_count_predicted_int))
-
-ggplot(dat.res, aes(x = fish_count_UM, y = fish_count_predicted_int_UM, col = had.ad))+
-  geom_jitter()
-
-dat.res |> 
-  ggplot(aes(x = fish_count_UM))+
-  geom_histogram()+
-  facet_grid(. ~ had.ad)
-
-dat.res |> 
-  ggplot(aes(x = fish_count_predicted_int_UM))+
-  geom_histogram()+
-  facet_grid(. ~ had.ad)
-hist(dat.res$fish_count_predicted_AD)
-hist(dat.res$fish_count_AD)
-
-dat.fit$residuals = residuals(out.tmb)
-
-ggplot(dat.fit, aes(x = fish_count, y = residuals, col = had.ad))+
-  geom_jitter()+
-  facet_wrap(.~fin_mark)
-
-dat.fit |> 
-  filter(fin_mark == "UM") |> 
-  ggplot(aes(x = residuals))+
-  geom_histogram() +
-  facet_wrap(.~had.ad)
-
-temp1 = dat.fit |>
-  count(had.ad, fish_count, fin_mark) |> 
-  mutate(scenario = "observed")
-temp2 = dat.fit |> 
-  count(had.ad, fish_count_predicted_int, fin_mark) |> 
-  mutate(scenario = "predicted") |> 
-  rename(fish_count = fish_count_predicted_int)
-
-rbind(temp1, temp2) |> 
-  ggplot(aes(x = fish_count, y = n, fill = scenario))+
-  geom_col(position = "dodge")+
-  facet_wrap(. ~ fin_mark)+
-  theme_bw()
-
-## model fit doesn't seem great either way. I could argue that UM is "more" off, but iit's not like AD is great eitehr. 
-
-
-ggplot(dat.fit |> 
-         filter(fish_count == 0),
-       aes(x = event_date))+
-  geom_density()+
-  facet_wrap(.~year, scale = "free_x")
-
-
-
-temp = predict(out.tmb, newdata = dat.fit, type = "zprob")
+# ## sure looks like we have zero inflated data. Let's check out the nbinom2 family in glmmTMB
+# 
+# library(glmmTMB)
+# 
+# out.tmb = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs') + fishing_duration_minutes + (1 | yearfac) + (1 | interview_id),
+#                   ziformula = ~ 1,
+#                   family = "poisson",
+#                   REML = TRUE,
+#                   data = dat.fit)
+# 
+# simulationOutput <- simulateResiduals(fittedModel = out.tmb, plot = F)
+# plot(simulationOutput)
+# 
+# dat.fit$fish_count_predicted = as.numeric(predict(out.tmb, newdata = dat.fit, type = "response"))
+# dat.fit = dat.fit |> 
+#   mutate(fish_count_predicted_int = round(fish_count_predicted))
+# 
+# dat.res = dat.fit |> 
+#   pivot_wider(names_from = fin_mark,
+#               values_from = c(fish_count, fish_count_predicted, fish_count_predicted_int))
+# 
+# ggplot(dat.res, aes(x = fish_count_UM, y = fish_count_predicted_int_UM, col = had.ad))+
+#   geom_jitter()
+# 
+# dat.res |> 
+#   ggplot(aes(x = fish_count_UM))+
+#   geom_histogram()+
+#   facet_grid(. ~ had.ad)
+# 
+# dat.res |> 
+#   ggplot(aes(x = fish_count_predicted_int_UM))+
+#   geom_histogram()+
+#   facet_grid(. ~ had.ad)
+# hist(dat.res$fish_count_predicted_AD)
+# hist(dat.res$fish_count_AD)
+# 
+# dat.fit$residuals = residuals(out.tmb)
+# 
+# ggplot(dat.fit, aes(x = fish_count, y = residuals, col = had.ad))+
+#   geom_jitter()+
+#   facet_wrap(.~fin_mark)
+# 
+# dat.fit |> 
+#   filter(fin_mark == "UM") |> 
+#   ggplot(aes(x = residuals))+
+#   geom_histogram() +
+#   facet_wrap(.~had.ad)
+# 
+# temp1 = dat.fit |>
+#   count(had.ad, fish_count, fin_mark) |> 
+#   mutate(scenario = "observed")
+# temp2 = dat.fit |> 
+#   count(had.ad, fish_count_predicted_int, fin_mark) |> 
+#   mutate(scenario = "predicted") |> 
+#   rename(fish_count = fish_count_predicted_int)
+# 
+# rbind(temp1, temp2) |> 
+#   ggplot(aes(x = fish_count, y = n, fill = scenario))+
+#   geom_col(position = "dodge")+
+#   facet_wrap(. ~ fin_mark)+
+#   theme_bw()
+# 
+# ## model fit doesn't seem great either way. I could argue that UM is "more" off, but iit's not like AD is great eitehr. 
+# 
+# 
+# ggplot(dat.fit |> 
+#          filter(fish_count == 0),
+#        aes(x = event_date))+
+#   geom_density()+
+#   facet_wrap(.~year, scale = "free_x")
+# 
+# 
+# 
+# temp = predict(out.tmb, newdata = dat.fit, type = "zprob")
 
 
 ## Current next step:
@@ -346,9 +341,8 @@ dat.fit |>
   filter(fish_count == 10)
 ## of these 9 records, 5 of them reported at least 1 AD catch as well. This is less than the
 ## average frequency of records with at least 1 AD catch (75%):
-mean(dat.fit$had.ad == "TRUE", na.rm = T)
+mean(dat.fit$had.kept == "TRUE", na.rm = T)
 
-#However, it's not terribly improbable either.
 
 ## looking for misreporting ---------------
 ## While we're here: For UM counts, how does the observed compare to the predicted when we split it by whether or not they had an AD fish?
@@ -356,24 +350,26 @@ mean(dat.fit$had.ad == "TRUE", na.rm = T)
 
 gp1 = df.pred |> 
   filter(fin_mark == "UM") |> 
-  group_by(predicted_count, had.ad) |> 
+  group_by(predicted_count, had.kept) |> 
   summarize(expected_frequency = sum(predicted_probability)) |> 
   ggplot(aes(x = predicted_count, y = expected_frequency))+
   geom_col()+
-  facet_wrap(.~ had.ad)+
+  facet_wrap(.~ had.kept)+
+  scale_y_log10()+
   xlim(c(-1, 16)) +
-  ggtitle("Predicted count frequencies by had.AD")
+  ggtitle("Predicted count frequencies by had.kept")
 
 gp2 = dat.fit |> 
   filter(fin_mark == "UM") |> 
-  group_by(had.ad) |> 
+  group_by(had.kept) |> 
   count(fish_count) |> 
   ungroup() |> 
   ggplot(aes(x = fish_count, y = n))+
   geom_col()+
-  facet_wrap(.~ had.ad) +
+  facet_wrap(.~ had.kept) +
+  scale_y_log10()+
   xlim(c(-1, 16))+
-  ggtitle("Observed count frequencies by had.AD")
+  ggtitle("Observed count frequencies by had.kept")
 
 gp1 / gp2
 

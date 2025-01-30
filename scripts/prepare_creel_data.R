@@ -3,9 +3,6 @@
 ## Thu Jan  2 12:27:22 2025
 ## Code to create our key dataframes: the `catch` (raw creel data) and `combined` (bss results)
 ##################################################
-
-
-
 library("CreelEstimateR")
 library("tidyverse")
 library("here")
@@ -16,25 +13,18 @@ library("here")
 # define fisheries we want data for
 fisheries <- c("Nisqually salmon 2021", "Nisqually salmon 2022", "Nisqually salmon 2023")
 
-# download the data from data.wa.gov
-datapull <- set_names(fisheries) |> 
-  map(~fetch_dwg(fishery_name = .x))
+fishery.ls = get_fishery_data(fishery = "Nisqually salmon", years = 2021:2023)
 
-interviews <- datapull$`Nisqually salmon 2023`$interview |> 
-  bind_rows(datapull$`Nisqually salmon 2022`$interview, datapull$`Nisqually salmon 2021`$interview) |> 
+
+interviews <- fishery.ls$interview |>  
   mutate(fishing_duration_minutes = (fishing_end_time - fishing_start_time)/60)
 
 # bind date and waterbody data to the creel interview-based catch records
-catch <- datapull$`Nisqually salmon 2023`$catch |> 
-  bind_rows(datapull$`Nisqually salmon 2022`$catch, datapull$`Nisqually salmon 2021`$catch) |>
+catch <- fishery.ls$catch |> 
   left_join(interviews |> 
-              select(interview_id, event_date, water_body, fishing_duration_minutes),
+              select(interview_id, event_date, water_body, year, month, week, fishing_duration_minutes),
             by = "interview_id") |> 
-  mutate(
-    year = year(event_date),
-    month = month(event_date),
-    management_week = framrsquared::management_week(event_date)
-  ) 
+  filter(species == "Chinook")
 
 write_csv(catch,
           here("cleaned_data/key_dataframes/creel_interview_catch.csv"))
@@ -42,10 +32,10 @@ write_csv(catch,
 ## we have separate entries by fork length for measured catches. We don't want that for this.
 catch = catch |> 
   group_by(interview_id, species, life_stage, fin_mark, fate,
-           event_date, water_body, fishing_duration_minutes, year, month, management_week) |> 
+           event_date, water_body, fishing_duration_minutes, year, month, week) |> 
   summarize(fish_count = sum(fish_count)) |> 
-  ungroup()
-
+  ungroup() |> 
+  filter(fin_mark != "UNK")
 
 ## Create dataframe for chinook-only with all relevant 0s. 
 

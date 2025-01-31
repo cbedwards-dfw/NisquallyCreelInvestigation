@@ -41,6 +41,16 @@ catch <- datapull$`Nisqually salmon 2023`$catch |>
     month = month(event_date)
   )
 
+closures <- datapull$`Nisqually salmon 2023`$closures |> 
+  bind_rows(datapull$`Nisqually salmon 2022`$closures, datapull$`Nisqually salmon 2021`$closures) |> 
+  mutate(
+    year = lubridate::year(event_date),
+    dayofweek = lubridate::wday(event_date, label = TRUE)
+  ) |> 
+  filter(!(year == 2024)) |> 
+  distinct(year, dayofweek)
+
+
 
 ```
 
@@ -52,12 +62,13 @@ What regulations were consistent and which changed over the three-year period? H
 
 ## Season length and closures days
 
-# Creel data collection 2021-2023
+### what were the fixed closure days for the sport fishery in each year?
+
+# Creel data collection methods 2021-2023
 
 How was data collected across years? What were key consistencies and changes made?
 
 Across the three-year monitoring period the implementation of the WDFW roving creel design underwent refinement regarding aspects of data collection across the primary data components representing effort and interview data. This includes how data was collected and what specific information was captured during survey activities.
-
 
 ## Interview data
 
@@ -125,6 +136,4 @@ interviews |>
 
 Notes
 
- is there any pattern to the reporting in anglers whom refuse to provide zip codes? is zip code a litmus test on "more honest" reporting? in more simple terms, are there systematic differences in catch rate between anglers who:
- 1) report zip code and those who refuse
- 2) for the subset who do report, is there a relationship between distance traveled and catch rate? then subsequently, joined catch per interview for specific catch groups to evaluate patterns in CPUE 
+is there any pattern to the reporting in anglers whom refuse to provide zip codes? is zip code a litmus test on "more honest" reporting? in more simple terms, are there systematic differences in catch rate between anglers who: 1) report zip code and those who refuse 2) for the subset who do report, is there a relationship between distance traveled and catch rate? then subsequently, joined catch per interview for specific catch groups to evaluate patterns in CPUE

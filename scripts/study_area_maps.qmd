@@ -7,18 +7,22 @@ editor: visual
 # load packages
 
 ```{r}
+library("tidyverse")
 library("ggmap")
+library("gt")
 ```
 
 # load local spatial data from repo
 
 ```{r}
-site_coords <- readr::read_csv("../cleaned_data/site_points.csv")
+site_coords <- readr::read_csv("../cleaned_data/site_points.csv") |> 
+  rename(lon = long)
 section_coords <- readr::read_csv("../cleaned_data/section_points.csv")
 
 ```
 
 # pull data from data.wa.gov
+
 ```{r}
 # define fisheries we want data for
 fisheries <- c("Nisqually salmon 2021", "Nisqually salmon 2022", "Nisqually salmon 2023")
@@ -29,27 +33,46 @@ datapull <- set_names(fisheries) |>
 
 # bind together the fishery_location_lut's for each year
 fishery_location_luts <- datapull$`Nisqually salmon 2021`$fishery_manager |> 
-  bind_rows(datapull$`Nisqually salmon 2022`$fishery_manager, datapull$`Nisqually salmon 2023`$fishery_manager)
+  bind_rows(datapull$`Nisqually salmon 2022`$fishery_manager, datapull$`Nisqually salmon 2023`$fishery_manager) |>
+  mutate(
+    year = str_extract(fishery_name, "\\d{4}$")
+  )
+  
+```
+
+# condensed table of locations used across years
+
+```{r}
+
+#index count locations across years 
+fishery_location_luts |> filter(location_type == "Site") |>  select(location_code, year) |> pivot_wider(names_from = year, values_from = year, values_fill = NA) |>
+  mutate(
+    across(.cols = -location_code, ~ if_else(!is.na(.), TRUE, FALSE))
+  ) |> 
+  gt()
+
 
 ```
 
 # map of index effort count sites
+
 ```{r}
 ggmap::register_stadiamaps("7dba3f5b-598a-41b1-bef8-aea60fb3ce1b")
 
-# Get the satellite basemap 
-basemap <- get_map(location = c(long = mean(c(bbox["xmin"], bbox["xmax"])), lat = mean(c(bbox["ymin"], bbox["ymax"]))), zoom = 12, maptype = "stamen_terrain", source = "stadia")
+qmplot(lon, lat, data = site_coords, maptype = "stamen_toner_lite", color = I("red"))
 
-# Create a simple map using ggplot2
-ggmap(basemap) +
-  geom_point(data = site_coords, color = "blue") + 
-  labs(title = "Nisqually River creel effort index sites")
+
+
 ```
 
 ## next steps
-### add sections as spatial lines
-### facet for a map for each year 
-### in plain language describe the choices made for section numbers and how we should refactor for comparability in three year review 
-### evaluate the fishery_location_lut across three years - what was consistent and what changed across years?
-#### tank crossing - only accessible for angler interviews in 2021
 
+### add sections as spatial lines
+
+### facet for a map for each year
+
+### in plain language describe the choices made for section numbers and how we should refactor for comparability in three year review
+
+### evaluate the fishery_location_lut across three years - what was consistent and what changed across years?
+
+#### tank crossing - only accessible for angler interviews in 2021

@@ -69,7 +69,6 @@ table(table(catch.zerod$interview_id))
 # catch.zerod |>
 #   filter(interview_id %in% interview.check) |>
 #   View()
-#   
 write_csv(catch.zerod,
           here("cleaned_data/key_dataframes/creel_interview_catch_withzeros.csv"))
 

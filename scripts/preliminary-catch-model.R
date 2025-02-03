@@ -342,7 +342,6 @@ ggsave(filename = here("figures/catch-model-results/total-UM-v2-zoom.pdf"),
        height = 8, width = 12
 )
 
-## predicting many more 0s than we're seeing. Am I donig something wrong?
 
 gp.fit = dat.fit |> 
   filter(fin_mark == "UM") |> 
@@ -573,7 +572,7 @@ obs.partial = dat.fit |>
   rename(frequency = n) |>
   ##fill in 0s
   full_join(expand_grid(had.kept = as.factor(c(TRUE, FALSE)), 
-                        fish_count = seq(0, max(obs.partial$fish_count), by = 1)
+                        fish_count = seq(0, max(dat.fit$fish_count), by = 1)
   )) |> 
   mutate(frequency = if_else(is.na(frequency),
                              0,
@@ -649,6 +648,18 @@ out.tmb4b = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs') + fishing_duration_
 
 AIC(out.tmb1, out.tmb2, out.tmb3, out.tmb4, out.tmb4b)
 
+## more overdispersion?
+out.tmb3b = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs') + fishing_duration_minutes + (1 | yearfac) + (1 | interview_id),
+                   ziformula = ~ fin_mark,
+                   family = nbinom1,
+                   dispformula = ~fin_mark,
+                   REML = TRUE,
+                   data = dat.fit)
+AIC(out.tmb3, out.tmb3b)
+
+cli::cli_alert("The most supported includes several forms of overdispersion: zero-inflation, dispersion terms that vary by fin mark, and then an individual-level random effect")
+cli::cli_alert_warning("Note: how do I add in the by-interview variability?? Currently I'm missing this, which means that my predictions are *more* conservative for include an individual-level random effect. Might be easier to skip that")
+
 ## tmb1 is the way to go. Plus, it's more consistent with our work above.
 
 mus = predict(out.tmb3, newdata = dat.fit, type = "conditional")
@@ -658,6 +669,8 @@ dispersion.vals = predict(out.tmb3, newdata = dat.fit, type = "disp")
 #For nbinom2:  V=\mu(1+\mu/\phi) = \mu+\mu^2/\phi
 
 cli::cli_alert("It appears that the dispersional value as pulled out of the model with sigma() is equivalent to the size parameter of the dnbinom function. This is worth checking")
+
+
 
 foo <- function(mu, disp.val, zprob){
   non.struct = dnbinom(0:30, size = disp.val, mu = mu)
@@ -916,5 +929,3 @@ data.frame(count = 0:10,
 
 
 
-
-# Question for evan: are interviews with 0 0 included?

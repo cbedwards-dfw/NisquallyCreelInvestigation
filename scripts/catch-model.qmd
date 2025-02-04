@@ -1,0 +1,1022 @@
+---
+title: "Catch model"
+author: "Collin Edwards"
+editor: visual
+---
+
+## Purpose
+
+Here we develop a model to predict fish encounters in the creel interviews, and identify when and how observations fail to match the expectations of our fitted model.
+
+
+## Setup
+
+### libraries
+
+```{r}
+library(here)
+library(tidyverse)
+library(lme4)
+library(mgcv)
+library(patchwork)
+library(gt)
+library(gratia)
+library(DHARMa)
+```
+
+### functions
+
+```{r}
+doy_2md=function(i){
+  ymd=as.Date(i-1, origin="2019-01-01")
+  return(format(ymd, "%b %d"))
+}
+
+facet_names <- c(`FALSE` = "Reported no kept fish",
+                 `TRUE` = "Reported 1+ kept fish")
+
+```
+
+### Reading in the data
+
+
+```{r}
+## rerun the following to recreate the clean data
+if(FALSE){
+  source(here("scripts/prepare_creel_data.R"))
+}
+
+raw = read_csv(here("cleaned_data/key_dataframes/creel_interview_catch_withzeros.csv")) 
+## Note: problem with col 4 being interpreted as a T/F instead of char
+
+dat = raw |> 
+  filter(species == "Chinook")
+
+dat.sum = dat |> 
+  filter(fin_mark %in% c("UM", "AD")) |> 
+  group_by(interview_id, 
+           life_stage, event_date, year, month, management_week, fishing_duration_minutes) |> 
+  summarize(um = sum(fish_count[fin_mark == "UM"]),
+            ad = sum(fish_count[fin_mark == "AD"]),
+            released = sum(fish_count[fate == "Released"]),
+            kept = sum(fish_count[fate == "Kept"]),
+  ) |> 
+  ungroup() |> 
+  mutate(had.ad = ad>0,
+         had.um = um>0,
+         had.release = released>0,
+         had.kept = kept >0)
+
+## for now, ignore jacks
+dat.sum = dat.sum |> 
+  filter(life_stage == "Adult")
+
+dat.fit = dat |> 
+  filter(life_stage == "Adult") |> 
+  filter(fin_mark %in% c("UM", "AD")) |> 
+  group_by(interview_id, fin_mark, event_date, year, month, fishing_duration_minutes) |>   
+  summarize(fish_count = sum(fish_count)) |> 
+  ungroup() |> 
+  ## need to collapse the data down a bit
+  left_join(dat.sum |> 
+              select(interview_id, had.ad, had.um, had.release, had.kept),
+            by = "interview_id") |> 
+  mutate(doy = yday(event_date),
+         fin_mark = as.factor(fin_mark),
+         had.ad = as.factor(had.ad),
+         had.um = as.factor(had.um),
+         had.release = as.factor(had.release),
+         had.kept = as.factor(had.kept),
+         yearfac = as.factor(year)) |> 
+  filter(!is.na(fishing_duration_minutes)) |> 
+  mutate(round_cat1 = case_when(
+    fish_count >= 3 & fish_count <= 7 ~ "3-7",
+    fish_count >= 8 & fish_count <= 12 ~ "8-12",
+    fish_count >= 13 ~ "13+",
+  )) |> 
+  mutate(round_cat1 = factor(round_cat1, levels = c("3-7", "8-12", "13+"))) |> 
+  mutate(round_cat2 = case_when(
+    fish_count >= 3 & fish_count <= 7 ~ "3-7",
+    fish_count >= 8 ~ "8+"
+  )) |> 
+  mutate(round_cat2 = factor(round_cat2, levels = c("3-7", "8+")))
+```
+
+Note that we're skipping the ~500 (out of ~65,000) observations with no fishing time. These are entirely from incomplete trips in 2021, which can't be compared apples-to-apples with completed trips anyways.
+
+::: {.panel-tabset}
+
+## Simple gam model
+
+We fit a generalized additive model with fixed effect of fin_mark and fishing duration, random effect of year, and smooth across day of year that differs by fin_mark. We assume a negative binomial distribution (more on that later).
+
+:::: {.panel-tabset}
+
+```{r}
+## GAM model -------------------------------------------
+
+out = gam(fish_count ~ fin_mark + 
+            s(doy, by = fin_mark, k = 20) + 
+            s(yearfac, bs = 're', k = 20) + 
+            fishing_duration_minutes,
+          method = "REML",
+          family = "nb",
+          data = dat.fit)
+
+# draw(out)
+
+gp.seasonality = conditional_values(
+  out,
+  condition = c("doy", "fin_mark")
+) |> 
+  draw()+
+  scale_x_continuous(limits = c(200, 300),
+                     labels = doy_2md)+
+  scale_y_continuous(limits = c(0, .5))+
+  labs(x = "",
+       y = "Predicted encounters per hour",
+       title = "Seasonality of encounters")+
+  theme_bw(base_size = 14)
+
+gp.seasonality
+
+# ggsave(filename = here("figures/catch-model-results/negbin-season-averages.pdf"),
+#       plot = gp.seasonality,
+#       width = 8, height = 5)
+```
+
+### model diagnostics
+
+First we check the model diagnostics
+
+```{r}
+gam.check(out, rep = 500)
+```
+
+These don't look great, and may reflect a mis-specified family.
+
+
+We use the Dharma package to look for model fit. Note that because this is simulation-based and we have MANY observations, the significance of tests for deviations are going to be inflated. I'm looking into solutions to this.
+
+```{r}
+simulationOutput = simulateResiduals(fittedModel = out, plot = F)
+plot(simulationOutput)
+testOutliers(simulationOutput, type = "bootstrap")
+testDispersion(simulationOutput)
+testZeroInflation(simulationOutput)
+```
+
+In general these seem okay. Not perfect, and maybe our dispersion is not great.
+
+
+Fun little bit of foreshadowing: we can look for the excess or deficit of particular values using Dharma. Here's what happens when we use the summary statistic of "Number of 10s in tehd ata").
+```{r}
+count_tens = function(x) sum(x == 10)
+testGeneric(simulationOutput, summary = count_tens, alternative = "greater")
+
+```
+
+
+### calculating predicted distributions
+```{r}
+dat.fit$fish_count_predicted = as.numeric(predict(out, newdata = dat.fit, type = "response"))
+dat.fit = dat.fit |>
+  mutate(fish_count_predicted_int = round(fish_count_predicted))
+
+
+## Looking at predicted vs observed distributions of gam model ==================
+
+## Returning to our simple gam model: 
+
+mus = predict(out, newdata = dat.fit, type = "response")
+cur.theta = out$family$getTheta(TRUE)
+
+# dnbinom(0:10, size = cur.theta, mu = mus[1])
+
+foo <- function(x){dnbinom(0:30, size = cur.theta, mu = x)}
+df = data.frame(mu = mus)|> 
+  mutate(mat = do.call(rbind, purrr::map(mu, foo)))
+
+df.pred = as.data.frame(df$mat)
+#gros names for a sec:
+names(df.pred) = 0:30  
+## now combine with the data and use pivoting to put into handy form
+df.pred <- dat.fit |> 
+  select(-fish_count_predicted, -fish_count_predicted_int) |> 
+  cbind(df.pred) |> 
+  pivot_longer(cols = "0":"30",
+               names_to = "predicted_count",
+               values_to = "predicted_probability") |> 
+  mutate(predicted_count = as.numeric(predicted_count))
+
+## With this dataframe, we can now sum up the number of counts we would expect to see
+## for marked and unmarked fish, *accounting* for the variability in negative binomials
+
+freq.pred = df.pred |> 
+  group_by(fin_mark, predicted_count) |> 
+  summarize(expected_frequency = sum(predicted_probability)) |> 
+  ungroup() |> 
+  ## adding rounding categorizations
+  mutate(round_cat1 = case_when(
+    predicted_count >= 3 & predicted_count <= 7 ~ "3-7",
+    predicted_count >= 8 & predicted_count <= 12 ~ "8-12",
+    predicted_count >= 13 ~ "13+",
+  )) |> 
+  mutate(round_cat1 = factor(round_cat1, levels = c("3-7", "8-12", "13+"))) |> 
+  mutate(round_cat2 = case_when(
+    predicted_count >= 3 & predicted_count <= 7 ~ "3-7",
+    predicted_count >= 8 ~ "8+"
+  )) |> 
+  mutate(round_cat2 = factor(round_cat2, levels = c("3-7", "8+")))
+
+## basic plotting ================================
+
+gp.fit = dat.fit |> 
+  filter(fin_mark == "AD") |> 
+  count(fish_count) |> 
+  ggplot(aes(x = fish_count, y = n))+
+  geom_col()+
+  xlim(c(-1,11))+
+  ggtitle("Observed counts of AD fish")+
+  theme_bw(base_size = 14)
+
+gp.pred = freq.pred |> 
+  filter(fin_mark == "AD") |> 
+  ggplot(aes(x = predicted_count, y = expected_frequency))+
+  geom_col()+
+  ggtitle("Predicted counts of AD fish")+
+  xlim(c(-1,11))+
+  theme_bw(base_size = 14)
+
+
+## AD marked
+
+pred.partial = freq.pred |> 
+  filter(fin_mark == "AD") |> 
+  group_by(predicted_count) |> 
+  summarize(expected_frequency = sum(expected_frequency)) |> 
+  ungroup() |> 
+  mutate(scenario = "prediction") |> 
+  rename(fish_count = predicted_count, frequency = expected_frequency)
+
+obs.partial = dat.fit |> 
+  filter(fin_mark == "AD") |> 
+  count(fish_count) |>
+  rename(frequency = n) |>
+  ##fill in 0s
+  full_join(expand_grid(fish_count = seq(0, max(dat.fit$fish_count), by = 1)
+  )) |> 
+  mutate(frequency = if_else(is.na(frequency),
+                             0,
+                             frequency)) |> 
+  mutate(scenario = "observation")
+
+gp.cur = bind_rows(pred.partial, obs.partial) |> 
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  ggtitle("AD catch frequencies")+
+  xlim(c(-1,21))+
+  labs(subtitle = "using negbin model")+
+  theme_bw(base_size = 14)
+
+gp.cur
+
+
+gp.cur = bind_rows(pred.partial, obs.partial) |> 
+  filter(fish_count > 0) |> 
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  ggtitle("AD catch frequencies (skipping 0s to provide more clarity)")+
+  labs(subtitle = "using negbin model")+
+  xlim(c(0,21))+
+  theme_bw(base_size = 14)
+
+gp.cur
+
+
+## Unmarked
+
+pred.partial = freq.pred |> 
+  filter(fin_mark == "UM") |> 
+  group_by(predicted_count) |> 
+  summarize(expected_frequency = sum(expected_frequency)) |> 
+  ungroup() |> 
+  mutate(scenario = "prediction") |> 
+  rename(fish_count = predicted_count, frequency = expected_frequency)
+
+obs.partial = dat.fit |> 
+  filter(fin_mark == "UM") |> 
+  count(fish_count) |>
+  rename(frequency = n) |>
+  ##fill in 0s
+  full_join(expand_grid(fish_count = seq(0, max(dat.fit$fish_count), by = 1)
+  )) |> 
+  mutate(frequency = if_else(is.na(frequency),
+                             0,
+                             frequency)) |> 
+  mutate(scenario = "observation")
+
+gp.cur = bind_rows(pred.partial, obs.partial) |> 
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  ggtitle("UM catch frequencies")+
+  xlim(c(-1,21))+
+  labs(subtitle = "from `preliminary-catch-model.R`, using negbin model")+
+  theme_bw(base_size = 14)
+
+gp.cur
+
+gp.cur = bind_rows(pred.partial, obs.partial) |> 
+  filter(fish_count > 0) |> 
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  xlim(c(0,21))+
+  ggtitle("UM catch frequencies (skipping 0s to provide more clarity)")+
+  labs(subtitle = "from `preliminary-catch-model.R`, using negbin model")+
+  theme_bw(base_size = 14)
+
+gp.cur
+
+gp.cur = bind_rows(pred.partial, obs.partial) |> 
+  filter(fish_count > 4) |> 
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  xlim(c(4,21))+
+  ggtitle("UM catch frequencies (skipping <5s to provide more clarity)")+
+  labs(subtitle = "from `preliminary-catch-model.R`, using negbin model")+
+  theme_bw(base_size = 14)
+
+gp.cur
+
+
+```
+
+
+### a quick interpretation aside:
+
+Does that one observation of 16 unmarked fish stand out? Well, the model thinks we have a small but decreasing probability of reports of more than 10 unmarked encounters. In total, how many people to we expect to have more than 10 unmarked fish?
+
+```{r}
+## quick thoughts:
+freq.pred |> 
+  filter(fin_mark == "UM") |> 
+  filter(predicted_count > 10) |> 
+  pull(expected_frequency) |> 
+  sum()
+
+```
+
+About 3. So having one observation in that range is not surprising. 
+
+#### more aside
+
+But the model thinks we should have at least 3 people reporting more than 10 fish, and we only had 1! 
+
+Isn't that a problem? 
+
+Not really. As we move far away from our actual data, I don't put high trust in the exact values of the model predictions. There's some math involved, but instead we can imagine that we're tiny model goblins in charge of determining the frequencies we should see for different fish counts. We know the frequencies should fall as we get to higher and higher fish counts, but how rapidly should they fall? Well, past 10 fish, we only have one actual data point, so we are mostly guessing based on the rate of fall in the smaller fish counts. If we get that rate of fall incorrect, the predicted frequencies of fish_counts in the 20s and 30s might be off, but as long as those predictions are small our data will still seem to be a pretty good match to the predictions.
+
+As an example of this in practice, the model thinks there's a 10% chance of having one person someone reporting between 50 and 100 encountered across all the interviews in this dataset.
+
+```{r}
+foo <- function(x){dnbinom(50:100, size = cur.theta, mu = x)}
+df = data.frame(mu = mus)|> 
+  mutate(mat = do.call(rbind, purrr::map(mu, foo)))
+sum(df$mat)
+```
+
+Biologically this seems pretty impossible, but this isn't really a failing of the model. Instead, the problem is that we're using model inferences far from values represented in the data we used to fit the model. We should avoid doing that.
+
+### returning from the aised: how do our fish counts compare?
+
+```{r}
+cat("Total fish in our data")
+sum(dat.fit$fish_count)
+cat("Total fish predicted from our model")
+sum(freq.pred$predicted_count * freq.pred$expected_frequency)
+```
+
+We're in the same ballpark, so probably fine.
+
+
+### Rounding bias
+
+```{r}
+## Looking at rounding bias ===============================
+obs.partial = dat.fit |> 
+  count(fin_mark, fish_count) |> 
+  rename(frequency = n) |> 
+  filter(fish_count %in% c(5, 10, 15, 20)) |> 
+  ## adding 0s where missing
+  full_join(expand_grid(fin_mark = c("AD", "UM"), 
+                        fish_count = c(5, 10, 15, 20))
+  ) |> 
+  mutate(frequency = if_else(is.na(frequency),
+                             0,
+                             frequency)) |> 
+  mutate(scenario = "observation")
+
+pred.partial = freq.pred |> 
+  filter(predicted_count %in% c(5, 10, 15, 20)) |> 
+  mutate(scenario = "prediction") |> 
+  select(fin_mark, fish_count = predicted_count, frequency = expected_frequency, scenario)
+
+bind_rows(obs.partial, pred.partial) |> 
+  ggplot(aes(x = as.factor(fish_count), y = frequency, fill = scenario))+
+  geom_col(position = "dodge2")+
+  labs(x = "Fish reported",
+       title = "Looking for rounding bias: comparing frequencies")+
+  facet_wrap(.~ fin_mark, ncol = 1)+
+  theme_bw(base_size = 14)
+
+## let's look at predictions vs obs by category
+
+obs.partial = dat.fit |> 
+  count(fin_mark, round_cat1) |> 
+  rename(frequency = n) |> 
+  mutate(scenario = "observation") |> 
+  na.omit()
+
+pred.partial = freq.pred |> 
+  group_by(fin_mark, round_cat1) |> 
+  summarize(frequency = sum(expected_frequency)) |> 
+  ungroup() |> 
+  mutate(scenario = "prediction") |> 
+  na.omit()
+
+bind_rows(obs.partial, pred.partial) |> 
+  ggplot(aes(x = round_cat1, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2")+
+  labs(x = "Rounding category",
+       title = "Looking for rounding bias: comparing within categories")+
+  facet_wrap(.~ fin_mark, ncol = 1)+
+  theme_bw(base_size = 14)
+
+## let's look at predictions vs obs by category
+
+obs.partial = dat.fit |> 
+  count(fin_mark, round_cat2) |> 
+  rename(frequency = n) |> 
+  mutate(scenario = "observation") |> 
+  na.omit()
+
+pred.partial = freq.pred |> 
+  group_by(fin_mark, round_cat2) |> 
+  summarize(frequency = sum(expected_frequency)) |> 
+  ungroup() |> 
+  mutate(scenario = "prediction") |> 
+  na.omit()
+
+bind_rows(obs.partial, pred.partial) |> 
+  ggplot(aes(x = round_cat2, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2")+
+  labs(x = "Rounding category",
+       title = "Looking for rounding bias: comparing within categories (2)")+
+  facet_wrap(.~ fin_mark, ncol = 1)+
+  theme_bw(base_size = 14)
+
+```
+
+
+### Prestige bias
+
+```{r}
+
+facet_names = c(`TRUE` = "Had kept fish",
+                `FALSE` = "Did not have kept fish")
+
+pred.partial = df.pred |> 
+  filter(fin_mark == "UM") |> 
+  group_by(predicted_count, had.kept) |> 
+  summarize(expected_frequency = sum(predicted_probability)) |> 
+  ungroup() |> 
+  mutate(scenario = "prediction") |> 
+  rename(fish_count = predicted_count, frequency = expected_frequency)
+
+obs.partial = dat.fit |> 
+  filter(fin_mark == "UM") |> 
+  count(had.kept, fish_count) |>
+  rename(frequency = n) |>
+  ##fill in 0s
+  full_join(expand_grid(had.kept = as.factor(c(TRUE, FALSE)), 
+                        fish_count = seq(0, max(dat.fit$fish_count), by = 1)
+  )) |> 
+  mutate(frequency = if_else(is.na(frequency),
+                             0,
+                             frequency)) |> 
+  mutate(scenario = "observation")
+
+
+bind_rows(pred.partial, obs.partial) |> 
+  # filter(fish_count > 0) |>
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  facet_wrap(.~ had.kept, labeller = as_labeller(facet_names),
+             ncol = 1, scale = "free_y") +
+  xlim(c(-1, 20))+
+  ggtitle("UM catch frequencies")+
+  labs(subtitle = "excluding 0s for visual clarity")+
+  theme_bw(base_size = 14)
+
+bind_rows(pred.partial, obs.partial) |>
+  filter(fish_count > 0) |>
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  facet_wrap(.~ had.kept, labeller = as_labeller(facet_names),
+             ncol = 1, scale = "free_y") +
+  xlim(c(NA, 20))+
+  ggtitle("UM catch frequencies")+
+  labs(subtitle = "excluding 0s for visual clarity")+
+  theme_bw(base_size = 14)
+
+
+bind_rows(pred.partial, obs.partial) |>
+  filter(fish_count > 4) |>
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  facet_wrap(.~ had.kept, labeller = as_labeller(facet_names),
+             ncol = 1, scale = "free_y") +
+  xlim(c(NA, 20))+
+  ggtitle("UM catch frequencies")+
+  labs(subtitle = "excluding <5s for visual clarity")+
+  theme_bw(base_size = 14)
+```
+
+That does not look like the high residuals were associated just with "did not have kept fish". In fact, the discrepency between prediction and obs seems even larger for the "had kept fish" category.
+
+::::
+
+
+## Zero-inflated model
+
+Our model above looks like it may have had dispersion issues. Note that it is important that we try to find a model that correctly represents dispersion, as we're trying to look at the mismatch between observations and expectations for a range of fish_counts, including large fish_counts. 
+
+### Model comparisons
+
+If our model is too constrained in terms of dispersion, we may be "forcing" discrepencies. A few ways to address dispersion:
+
+- Are we zero-inflated? Tests above did not seem to indicate that we were, but this is still worth checking
+- Is dispersion different between marked and unmarked fish?
+- Should we be using a different version of the negative binomial? e.g. scaling quadratically rather than linearly with the sum of our predictors?
+
+Here I test a series of model structures to see what has the best support using AIC (for AIC, the lowest is the best.
+
+```{r}
+
+## Zero-inflated model ----------------------------------
+# Looking at the predicted vs observed distributions of UM and AD, it looks like we're running into differing dispersion. 
+# I think the best method is to try to account for this with a zero-inflated model
+
+
+# Let's check out the nbinom2 family in glmmTMB
+#
+library(glmmTMB)
+
+df.models = NULL
+
+out.tmba = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs', k = 20) + fishing_duration_minutes + (1 | yearfac),
+                   family = nbinom1,
+                   REML = TRUE,
+                   data = dat.fit)
+
+df.models = bind_rows(df.models,
+                      data.frame(name = "out.tmba", 
+                                 aic = AIC(out.tmba),
+                                 family = family(out.tmba)[[1]],
+                                 explanation = "null model. Our 'simple gam model' above, but fit using glmmTMB")
+                      )
+
+out.tmbb = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs', k = 20) + fishing_duration_minutes + (1 | yearfac),
+                   family = nbinom1,
+                   dispformula = ~fin_mark,
+                   REML = TRUE,
+                   data = dat.fit)
+
+df.models = bind_rows(df.models,
+                      data.frame(name = "out.tmbb", 
+                                 aic = AIC(out.tmbb),
+                                 family = family(out.tmbb)[[1]],
+                                 explanation = "Null model, but with different dispersions based on fin mark"))
+
+out.tmb1 = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs', k = 20) + fishing_duration_minutes + (1 | yearfac),
+                   ziformula = ~ fin_mark,
+                   family = nbinom1,
+                   REML = TRUE,
+                   data = dat.fit)
+
+df.models = bind_rows(df.models,
+                      data.frame(name = "out.tmb1", 
+                                 aic = AIC(out.tmb1),
+                                 family = family(out.tmb1)[[1]],
+                                 explanation = "zero inflated model with zinf ~ fin_mark, no other dispersion modifications"))
+
+out.tmb2 = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs', k = 20) + fishing_duration_minutes + (1 | yearfac),
+                   ziformula = ~ fin_mark,
+                   family = nbinom2,
+                   REML = TRUE,
+                   data = dat.fit)
+
+df.models = bind_rows(df.models,
+                      data.frame(name = "out.tmb2", 
+                                 aic = AIC(out.tmb2),
+                                 family = family(out.tmb2)[[1]],
+                                 explanation = "zero inflated model with zinf ~ fin_mark, using the nbinom2 family (quadratic)"))
+
+out.tmb3 = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs', k = 20) + fishing_duration_minutes + (1 | yearfac),
+                   ziformula = ~ fin_mark,
+                   family = nbinom1,
+                   dispformula = ~fin_mark,
+                   REML = TRUE,
+                   data = dat.fit)
+
+
+df.models = bind_rows(df.models,
+                      data.frame(name = "out.tmb3", 
+                                 aic = AIC(out.tmb3),
+                                 family = family(out.tmb3)[[1]],
+                                 explanation = "zero inflated model with zinf ~ fin_mark, dispersion/shape term varies by fin mark"))
+
+out.tmb4 = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs', k = 20) + fishing_duration_minutes + (1 | yearfac),
+                   ziformula = ~ fin_mark,
+                   family = truncated_nbinom1,
+                   dispformula = ~fin_mark,
+                   REML = TRUE,
+                   data = dat.fit)
+
+df.models = bind_rows(df.models,
+                      data.frame(name = "out.tmb4", 
+                                 aic = AIC(out.tmb4),
+                                 family = family(out.tmb4)[[1]],
+                                 explanation = "hurdle model with zinf ~ fin_mark, dispersion/shape term varies by fin mark"))
+
+out.tmb4b = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs', k = 20) + fishing_duration_minutes + (1 | yearfac),
+                    ziformula = ~ fin_mark,
+                    family = truncated_nbinom1,
+                    REML = TRUE,
+                    data = dat.fit)
+
+df.models = bind_rows(df.models,
+                      data.frame(name = "out.tmb4b", 
+                                 aic = AIC(out.tmb4b),
+                                 family = family(out.tmb4b)[[1]],
+                                 explanation = "hurdle model with zinf ~ fin_mark, no other dispersion modifications"))
+
+
+
+## more overdispersion?
+out.tmb3b = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs') + fishing_duration_minutes + (1 | yearfac) + (1 | interview_id),
+                    ziformula = ~ fin_mark,
+                    family = nbinom1,
+                    dispformula = ~fin_mark,
+                    REML = TRUE,
+                    data = dat.fit)
+
+df.models = bind_rows(df.models,
+                      data.frame(name = "out.tmb3b", 
+                                 aic = AIC(out.tmb3b),
+                                 family = family(out.tmb3b)[[1]],
+                                 explanation = "zero inflated model with zinf ~ fin_mark, dispersion/shape term varies by fin mark, also individual-based random effect"))
+
+
+## more overdispersion?
+out.tmb4 = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs', k = 20) + fishing_duration_minutes + (1 | yearfac),
+                   ziformula = ~ .,
+                   family = nbinom1,
+                   dispformula = ~fin_mark,
+                   REML = TRUE,
+                   data = dat.fit)
+
+df.models = bind_rows(df.models,
+                      data.frame(name = "out.tmb4", 
+                                 aic = AIC(out.tmb4),
+                                 family = family(out.tmb4)[[1]],
+                                 explanation = "zero inflated model with zinf ~ [model structure], dispersion/shape term varies by fin mark"))
+
+df.models |> 
+  arrange(aic) |> 
+  gt()
+```
+
+
+We see the most support for `out.tmb3b` (sorry for the terrible naming conventions). This model has (a) zero-inflation that depends on fin marks, (b) separate dispersion/shape parameter estimation for marked and unmarked fish, and (c) an individual-based random effect. (c) is an especially confusing concept, but allows for additional overdispersion. See [I have a ref for this on my personal computer, need to grab it].
+
+We will move forward using this best model.
+
+
+:::: {.panel-tabset}
+
+### Model diagnostics
+
+```{r} 
+## rename for simplicity
+out.tmb = out.tmb3b
+resids = simulateResiduals(out.tmb)
+plot(resids)
+```
+
+This looks much better than our gam diagnostics.
+
+
+### Calculating predictions
+
+```{r}
+mus = predict(out.tmb, newdata = dat.fit, type = "conditional")
+probs.struct.zero = predict(out.tmb, newdata = dat.fit, type = "zprob") 
+dispersion.vals = predict(out.tmb, newdata = dat.fit, type = "disp") 
+#For nbinom1: V=\mu(1+\phi)
+#For nbinom2:  V=\mu(1+\mu/\phi) = \mu+\mu^2/\phi
+
+cli::cli_alert("It appears that the dispersional value as pulled out of the model with sigma() is equivalent to the size parameter of the dnbinom function. This is worth checking")
+
+
+
+foo <- function(mu, disp.val, zprob){
+  non.struct = dnbinom(0:30, size = disp.val, mu = mu)
+  struct = c(1, rep(0,30))
+  return(non.struct * (1 - zprob) + struct * zprob)
+}
+## this gets messy
+
+
+
+df = data.frame(mu = mus,
+                disp.val = dispersion.vals,
+                probs.struct.zero
+)|> 
+  mutate(mat = do.call(rbind, purrr::pmap(
+    list(mu = mu, disp.val = disp.val, zprob = probs.struct.zero),
+    foo)))
+
+df.pred = as.data.frame(df$mat)
+#gross names for a sec:
+names(df.pred) = 0:30  
+## now combine with the data and use pivoting to put into handy form
+df.pred <- dat.fit |> 
+  select(-fish_count_predicted, -fish_count_predicted_int) |> 
+  cbind(df.pred) |> 
+  pivot_longer(cols = "0":"30",
+               names_to = "predicted_count",
+               values_to = "predicted_probability") |> 
+  mutate(predicted_count = as.numeric(predicted_count))
+
+## With this dataframe, we can now sum up the number of counts we would expect to see
+## for marked and unmarked fish, *accounting* for the variability in negative binomials
+
+freq.pred = df.pred |> 
+  group_by(fin_mark, predicted_count) |> 
+  summarize(expected_frequency = sum(predicted_probability)) |> 
+  ungroup() |> 
+  ## adding rounding categorizations
+  mutate(round_cat1 = case_when(
+    predicted_count >= 3 & predicted_count <= 7 ~ "3-7",
+    predicted_count >= 8 & predicted_count <= 12 ~ "8-12",
+    predicted_count >= 13 ~ "13+",
+  )) |> 
+  mutate(round_cat1 = factor(round_cat1, levels = c("3-7", "8-12", "13+"))) |> 
+  mutate(round_cat2 = case_when(
+    predicted_count >= 3 & predicted_count <= 7 ~ "3-7",
+    predicted_count >= 8 ~ "8+"
+  )) |> 
+  mutate(round_cat2 = factor(round_cat2, levels = c("3-7", "8+")))
+
+## basic plotting ================================
+
+pred.partial = freq.pred |> 
+  filter(fin_mark == "AD") |> 
+  group_by(predicted_count) |> 
+  summarize(expected_frequency = sum(expected_frequency)) |> 
+  ungroup() |> 
+  mutate(scenario = "prediction") |> 
+  rename(fish_count = predicted_count, frequency = expected_frequency)
+
+obs.partial = dat.fit |> 
+  filter(fin_mark == "AD") |> 
+  count(fish_count) |>
+  rename(frequency = n) |>
+  ##fill in 0s
+  full_join(expand_grid(fish_count = seq(0, max(dat.fit$fish_count), by = 1)
+  )) |> 
+  mutate(frequency = if_else(is.na(frequency),
+                             0,
+                             frequency)) |> 
+  mutate(scenario = "observation")
+
+gp.cur = bind_rows(pred.partial, obs.partial) |> 
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  ggtitle("AD catch frequencies")+
+  labs(subtitle = "using zero-inflated model")+
+  theme_bw(base_size = 14)
+
+gp.cur
+
+gp.cur = bind_rows(pred.partial, obs.partial) |> 
+  filter(fish_count > 0) |> 
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  ggtitle("AD catch frequencies (skipping 0s to provide more clarity)")+
+  labs(subtitle = "using zero-inflated model")+
+  theme_bw(base_size = 14)
+
+gp.cur
+
+pred.partial = freq.pred |> 
+  filter(fin_mark == "UM") |> 
+  group_by(predicted_count) |> 
+  summarize(expected_frequency = sum(expected_frequency)) |> 
+  ungroup() |> 
+  mutate(scenario = "prediction") |> 
+  rename(fish_count = predicted_count, frequency = expected_frequency)
+
+obs.partial = dat.fit |> 
+  filter(fin_mark == "UM") |> 
+  count(fish_count) |>
+  rename(frequency = n) |>
+  ##fill in 0s
+  full_join(expand_grid(fish_count = seq(0, max(dat.fit$fish_count), by = 1)
+  )) |> 
+  mutate(frequency = if_else(is.na(frequency),
+                             0,
+                             frequency)) |> 
+  mutate(scenario = "observation")
+
+gp.cur = bind_rows(pred.partial, obs.partial) |> 
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  ggtitle("UM catch frequencies")+
+  labs(subtitle = "using zero-inflated model")+
+  theme_bw(base_size = 14)
+
+gp.cur
+
+gp.cur = bind_rows(pred.partial, obs.partial) |> 
+  filter(fish_count > 0) |> 
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  ggtitle("UM catch frequencies (skipping 0s to provide more clarity)")+
+  labs(subtitle = "using negbin model")+
+  theme_bw(base_size = 14)
+
+gp.cur
+
+
+gp.cur = bind_rows(pred.partial, obs.partial) |> 
+  filter(fish_count > 4) |> 
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  ggtitle("UM catch frequencies (skipping <5s to provide more clarity)")+
+  labs(subtitle = "using negbin model")+
+  theme_bw(base_size = 14)
+
+gp.cur
+```
+
+
+
+### Rounding bias
+
+```{r}
+## Looking at rounding bias ===============================
+obs.partial = dat.fit |> 
+  count(fin_mark, fish_count) |> 
+  rename(frequency = n) |> 
+  filter(fish_count %in% c(5, 10, 15, 20)) |> 
+  ## adding 0s where missing
+  full_join(expand_grid(fin_mark = c("AD", "UM"), 
+                        fish_count = c(5, 10, 15, 20))
+  ) |> 
+  mutate(frequency = if_else(is.na(frequency),
+                             0,
+                             frequency)) |> 
+  mutate(scenario = "observation")
+
+pred.partial = freq.pred |> 
+  filter(predicted_count %in% c(5, 10, 15, 20)) |> 
+  mutate(scenario = "prediction") |> 
+  select(fin_mark, fish_count = predicted_count, frequency = expected_frequency, scenario)
+
+bind_rows(obs.partial, pred.partial) |> 
+  ggplot(aes(x = as.factor(fish_count), y = frequency, fill = scenario))+
+  geom_col(position = "dodge2")+
+  labs(x = "Fish reported",
+       title = "Looking for rounding bias: comparing frequencies")+
+  facet_wrap(.~ fin_mark, ncol = 1)+
+  theme_bw(base_size = 14)
+
+## let's look at predictions vs obs by category
+
+obs.partial = dat.fit |> 
+  count(fin_mark, round_cat1) |> 
+  rename(frequency = n) |> 
+  mutate(scenario = "observation") |> 
+  na.omit()
+
+pred.partial = freq.pred |> 
+  group_by(fin_mark, round_cat1) |> 
+  summarize(frequency = sum(expected_frequency)) |> 
+  ungroup() |> 
+  mutate(scenario = "prediction") |> 
+  na.omit()
+
+bind_rows(obs.partial, pred.partial) |> 
+  ggplot(aes(x = round_cat1, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2")+
+  labs(x = "Rounding category",
+       title = "Looking for rounding bias: comparing within categories")+
+  facet_wrap(.~ fin_mark, ncol = 1)+
+  theme_bw(base_size = 14)
+
+## let's look at predictions vs obs by category
+
+obs.partial = dat.fit |> 
+  count(fin_mark, round_cat2) |> 
+  rename(frequency = n) |> 
+  mutate(scenario = "observation") |> 
+  na.omit()
+
+pred.partial = freq.pred |> 
+  group_by(fin_mark, round_cat2) |> 
+  summarize(frequency = sum(expected_frequency)) |> 
+  ungroup() |> 
+  mutate(scenario = "prediction") |> 
+  na.omit()
+
+bind_rows(obs.partial, pred.partial) |> 
+  ggplot(aes(x = round_cat2, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2")+
+  labs(x = "Rounding category",
+       title = "Looking for rounding bias: comparing within categories (2)")+
+  facet_wrap(.~ fin_mark, ncol = 1)+
+  theme_bw(base_size = 14)
+
+```
+
+
+### Prestige bias
+
+```{r}
+
+facet_names = c(`TRUE` = "Had kept fish",
+                `FALSE` = "Did not have kept fish")
+
+pred.partial = df.pred |> 
+  filter(fin_mark == "UM") |> 
+  group_by(predicted_count, had.kept) |> 
+  summarize(expected_frequency = sum(predicted_probability)) |> 
+  ungroup() |> 
+  mutate(scenario = "prediction") |> 
+  rename(fish_count = predicted_count, frequency = expected_frequency)
+
+obs.partial = dat.fit |> 
+  filter(fin_mark == "UM") |> 
+  count(had.kept, fish_count) |>
+  rename(frequency = n) |>
+  ##fill in 0s
+  full_join(expand_grid(had.kept = as.factor(c(TRUE, FALSE)), 
+                        fish_count = seq(0, max(dat.fit$fish_count), by = 1)
+  )) |> 
+  mutate(frequency = if_else(is.na(frequency),
+                             0,
+                             frequency)) |> 
+  mutate(scenario = "observation")
+
+
+bind_rows(pred.partial, obs.partial) |> 
+  # filter(fish_count > 0) |>
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  facet_wrap(.~ had.kept, labeller = as_labeller(facet_names),
+             ncol = 1, scale = "free_y") +
+  xlim(c(-1, 20))+
+  ggtitle("UM catch frequencies")+
+  labs(subtitle = "excluding 0s for visual clarity")+
+  theme_bw(base_size = 14)
+
+bind_rows(pred.partial, obs.partial) |>
+  filter(fish_count > 0) |>
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  facet_wrap(.~ had.kept, labeller = as_labeller(facet_names),
+             ncol = 1, scale = "free_y") +
+  xlim(c(NA, 20))+
+  ggtitle("UM catch frequencies")+
+  labs(subtitle = "excluding 0s for visual clarity")+
+  theme_bw(base_size = 14)
+
+
+bind_rows(pred.partial, obs.partial) |>
+  filter(fish_count > 4) |>
+  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
+  geom_col(position = "dodge2", width = .6)+
+  facet_wrap(.~ had.kept, labeller = as_labeller(facet_names),
+             ncol = 1, scale = "free_y") +
+  xlim(c(NA, 20))+
+  ggtitle("UM catch frequencies")+
+  labs(subtitle = "excluding <5s for visual clarity")+
+  theme_bw(base_size = 14)
+```
+
+::::
+
+:::
+

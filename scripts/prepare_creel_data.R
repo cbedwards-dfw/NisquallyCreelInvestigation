@@ -22,7 +22,8 @@ interviews <- fishery.ls$interview |>
 # bind date and waterbody data to the creel interview-based catch records
 catch <- fishery.ls$catch |> 
   left_join(interviews |> 
-              select(interview_id, event_date, water_body, year, month, week, fishing_duration_minutes),
+              select(interview_id, event_date, water_body, year, month, week, fishing_duration_minutes,
+                     angler_count),
             by = "interview_id") |> 
   filter(species == "Chinook")
 

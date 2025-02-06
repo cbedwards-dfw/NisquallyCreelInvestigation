@@ -4,17 +4,16 @@ author: "Collin Edwards"
 editor: visual
 ---
 
-Before looking at comparison between model predictions and our data, we first should develop an expectation for what patterns we *would* see if different forms of bias were present. For simplicity, we will imagine we know the actual number of encounters with different numbers of fish. While we have ~ 16,000 interviews in our analysis, to keep our numbers small we will hypothesize 1000 interviews, each reporting marked and unmarked fish. We'll use somewhat realistic parameter values, but the specifics aren't particularly important; we just want a baseline hypothetical "truth" to compare our forms of bias against.
+Before looking at comparison between model predictions and our data, we first should develop an expectation for what patterns we *would* see if different forms of bias were present. For simplicity, we will imagine we know the actual number of encounters with different numbers of fish. While we have \~ 16,000 interviews in our analysis, to keep our numbers small we will hypothesize 1000 interviews, each reporting marked and unmarked fish. We'll use somewhat realistic parameter values, but the specifics aren't particularly important; we just want a baseline hypothetical "truth" to compare our forms of bias against.
 
 ```{r}
 library(tidyverse)
 ```
 
-
 ```{r}
 dat.true = data.frame(
-  freq = c(round(dnbinom(0:20, size = 1.6, mu = 2)*1000),
-           round(dnbinom(0:20, size = .8, mu = .8)*1000)),
+  freq = c(round(dnbinom(0:20, size = .16, mu = 1)*1000),
+           round(dnbinom(0:20, size = .16, mu = .7)*1000)),
   fish_count = c(0:20,
                  0:20),
   fin_mark = rep(c("AD", "UM"), each = 21)
@@ -26,12 +25,12 @@ dat.true = data.frame(
 ggplot(dat.true, aes(x = fish_count, y = freq))+
   geom_col()+
   facet_wrap(.~ fin_mark, ncol = 1)+
+  xlim(c(NA, 16))+
   labs(y = "# of interviews", title = "Hypothetical reality")+
   theme_bw(base_size = 14)
 ```
 
 In an ideal world, our model would be able to exactly regenerate the underlying "true" data. Obviously this is not something we can achieve, but when looking for patterns of bias, it's helpful to compare what we would expect to see (the reality plotted above) with what we actually observed. Here we'll explore what we think we might see under different bias scenarios relative to our expectation.
-
 
 ## Misidentification
 
@@ -39,9 +38,9 @@ In an ideal world, our model would be able to exactly regenerate the underlying 
 
 The idea with rounding bias is that some anglers will round their counts to the nearest 5 or 10 digits. What does the signal for this look like?
 
-- First, the number of encounters for 5, 10, and 15 fish would be higher than expect.
-- Second, since those rounded fish_counts are being "removed" from their rightful places, the other values should be below what we expected
-- Third, since rounding is not changing the total number of fish, then if we bin our data into "rounding categories" of 3-7, 8-12, 13-17, etc, the total number of fish in those categories should match our expectations.
+-   First, the number of encounters for 5, 10, and 15 fish would be higher than expect.
+-   Second, since those rounded fish_counts are being "removed" from their rightful places, the other values should be below what we expected
+-   Third, since rounding is not changing the total number of fish, then if we bin our data into "rounding categories" of 3-7, 8-12, 13-17, etc, the total number of fish in those categories should match our expectations.
 
 ```{r generating rounding error}
 dat.rounded = dat.true
@@ -62,6 +61,20 @@ dat.rounded$freq[dat.rounded$fish_count == 10 & dat.rounded$fin_mark == "AD"] <-
 dat.rounded$freq[dat.rounded$fish_count %in% c(8,9,11,12) & dat.rounded$fin_mark == "AD"] <- 
   dat.rounded$freq[dat.rounded$fish_count %in% c(8,9,11,12)& dat.rounded$fin_mark == "AD"]  * (1 - proportion.rounding)
 
+## AD round to 15
+dat.rounded$freq[dat.rounded$fish_count == 15 & dat.rounded$fin_mark == "AD"] <- 
+  dat.rounded$freq[dat.rounded$fish_count == 15 & dat.rounded$fin_mark == "AD"] +
+  sum(dat.rounded$freq[dat.rounded$fish_count %in% c(13:14,16:17) & dat.rounded$fin_mark == "AD"]) * proportion.rounding
+dat.rounded$freq[dat.rounded$fish_count %in% c(13:14,16:17) & dat.rounded$fin_mark == "AD"] <- 
+  dat.rounded$freq[dat.rounded$fish_count %in% c(13:14,16:17)& dat.rounded$fin_mark == "AD"]  * (1 - proportion.rounding)
+
+## AD round to 15
+dat.rounded$freq[dat.rounded$fish_count == 20 & dat.rounded$fin_mark == "AD"] <- 
+  dat.rounded$freq[dat.rounded$fish_count == 20 & dat.rounded$fin_mark == "AD"] +
+  sum(dat.rounded$freq[dat.rounded$fish_count %in% c(18:19,21:22) & dat.rounded$fin_mark == "AD"]) * proportion.rounding
+dat.rounded$freq[dat.rounded$fish_count %in% c(18:19,21:22) & dat.rounded$fin_mark == "AD"] <- 
+  dat.rounded$freq[dat.rounded$fish_count %in% c(18:19,21:22)& dat.rounded$fin_mark == "AD"]  * (1 - proportion.rounding)
+
 
 ## UM round to 5
 dat.rounded$freq[dat.rounded$fish_count == 5 & dat.rounded$fin_mark == "UM"] <- 
@@ -79,8 +92,14 @@ dat.rounded$freq[dat.rounded$fish_count %in% c(8,9,11,12) & dat.rounded$fin_mark
 
 dat.join = rbind(dat.true |> mutate(type = "predicted"),
                  dat.rounded |> mutate(type = "observed"))
-```
 
+## UM round to 15
+dat.rounded$freq[dat.rounded$fish_count == 15 & dat.rounded$fin_mark == "UM"] <- 
+  dat.rounded$freq[dat.rounded$fish_count == 15 & dat.rounded$fin_mark == "UM"] +
+  sum(dat.rounded$freq[dat.rounded$fish_count %in% c(13:14,16:17) & dat.rounded$fin_mark == "UM"]) * proportion.rounding
+dat.rounded$freq[dat.rounded$fish_count %in% c(13:14,16:17) & dat.rounded$fin_mark == "UM"] <- 
+  dat.rounded$freq[dat.rounded$fish_count %in% c(13:14,16:17)& dat.rounded$fin_mark == "UM"]  * (1 - proportion.rounding)
+```
 
 ```{r plotting rounding error}
 ggplot(dat.join, aes(x = fish_count, y = freq, fill = type))+
@@ -89,6 +108,14 @@ ggplot(dat.join, aes(x = fish_count, y = freq, fill = type))+
   labs(y = "# of interviews", title = "Signal of rounding bias",
        subtitle = "multiples of 5 are overrepresented relative to our expectations")+
   theme_bw(base_size = 14)
+
+ggplot(dat.join |> filter(fish_count>0), aes(x = fish_count, y = freq, fill = type))+
+  geom_col(position = "dodge2")+
+  facet_wrap(.~ fin_mark, ncol = 1, scale = "free_y")+
+  labs(y = "# of interviews", title = "Signal of rounding bias, zoomed in",
+       subtitle = "multiples of 5 are overrepresented relative to our expectations")+
+  theme_bw(base_size = 14)
+
 
 ```
 
@@ -99,8 +126,10 @@ dat.categories <- dat.join |>
     fish_count %in% 8:12 ~ "8-12",
     fish_count >12 ~ "13+",
   )) |> 
+  mutate(rounding_category = factor(rounding_category, levels = c("3-7", "8-12", "13+"))) |> 
   group_by(rounding_category, fin_mark, type) |> 
-  summarize(freq = sum(freq))
+  summarize(freq = sum(freq)) |> 
+  filter(!is.na(rounding_category))
 
 ggplot(dat.categories, aes(x = rounding_category, y = freq, fill = type))+
   geom_col(position = "dodge2")+
@@ -108,22 +137,18 @@ ggplot(dat.categories, aes(x = rounding_category, y = freq, fill = type))+
   labs(y = "# of interviews",
        x = "rounding category",
        title = "Signal of rounding bias",
-       subtitle = "Total counts in 'rounding categories' are not affected")+
+       subtitle = "Total interviews in 'rounding categories' are not affected")+
   theme_bw(base_size = 14)
 ```
-
 
 ## Prestige bias
 
 The idea with prestige bias is that anglers who do not catch anything may be tempted to lie to samplers to avoid embarassment. This means that some of our interviews that report encounters may be lies. However, anglers who report keeping a fish provably had at least one encounter; we assume they do not have motivation for lying. Given all of this, we expect:
 
-
 Since we don't know what numbers people will make up for their catch, we can't know *exactly* what patterns we should expect to see, but the general fingerprint for prestige bias will be that:
 
-- the catches of anglers reporting 1 or more kept fish to be around our expectations
-- the catches for anglers reporting no kept fish will have fewer 0s and more non-zeros than we expect
-
-
+-   the catches of anglers reporting 1 or more kept fish to be around our expectations
+-   the catches for anglers reporting no kept fish will have fewer 0s and more non-zeros than we expect
 
 For simplicity, we will assume that 1/2 of the AD marked fish are kept. And we'll assume the prestige liars randomly reported between 1 and 5 encounters of unmarked fish. If they were to consistently report a large number (e.g. tending to say "sure, I don't have anything to show for it, but I definitely caught 5 unmarked fish"), the pattern would look different, but we would still expect to see the discrepency between expectations only showing up for anglers with no kept fish.
 
@@ -179,7 +204,7 @@ dat.join |>
   ungroup() |> 
 ggplot(aes(x = fish_count, y = freq, fill = type))+
   geom_col(position = "dodge2")+
-  facet_wrap(. ~ status)+
+  facet_wrap(. ~ status, scales = "free_y")+
     labs(y = "# of interviews",
        title = "Fingerprint of prestige bias",
        subtitle = "anglers with no kept fish have relatively low zeros and high non-zeroes")+
@@ -187,3 +212,47 @@ ggplot(aes(x = fish_count, y = freq, fill = type))+
 ```
 
 **How likely is it that people prestige-lie about encountering and releasing marked fish instead of unmarked fish?**
+
+## Misidentification
+
+Assume 10% of anglers had 6 pink encounters that they misidentified as UM chin
+
+```{r}
+dat.mis = dat.true
+dat.pinks = dat.mis |> 
+  filter(fin_mark == "UM") |> 
+  mutate(freq.new = freq*.1) |> 
+  select(-freq) |> 
+  mutate(fish_count = fish_count + 6)
+dat.mis = dat.mis |> 
+  mutate(freq = if_else(fin_mark == "UM",
+                        freq*.9,
+                        freq)
+  ) |> 
+  left_join(dat.pinks) |> 
+  mutate(freq.new = if_else(is.na(freq.new), 0, freq.new)) |> 
+  mutate(freq = freq+freq.new) |> 
+  select(-freq.new)
+
+```
+
+
+```{r plotting misidentification}
+dat.join = bind_rows(dat.mis |> mutate(type = "observed"), 
+                     dat.true |> mutate(type = "predicted"))
+ggplot(dat.join, aes(x = fish_count, y = freq, fill = type))+
+  geom_col(position = "dodge2")+
+  facet_wrap(.~ fin_mark, ncol = 1, scale = "free_y")+
+  labs(y = "# of interviews", title = "Signal of Misidentification",
+       subtitle = "")+
+  theme_bw(base_size = 14)
+
+ggplot(dat.join |> filter(fish_count>0), aes(x = fish_count, y = freq, fill = type))+
+  geom_col(position = "dodge2")+
+  facet_wrap(.~ fin_mark, ncol = 1, scale = "free_y")+
+  labs(y = "# of interviews", title = "Signal of Misidentification, zoomed in",
+       subtitle = "multiples of 5 are overrepresented relative to our expectations")+
+  theme_bw(base_size = 14)
+
+
+```

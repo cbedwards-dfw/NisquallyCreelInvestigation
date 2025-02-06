@@ -8,7 +8,6 @@ editor: visual
 
 Here we develop a model to predict fish encounters in the creel interviews, and identify when and how observations fail to match the expectations of our fitted model.
 
-
 ## Setup
 
 ### libraries
@@ -38,7 +37,6 @@ facet_names <- c(`FALSE` = "Reported no kept fish",
 ```
 
 ### Reading in the data
-
 
 ```{r}
 ## rerun the following to recreate the clean data
@@ -102,16 +100,14 @@ dat.fit = dat |>
   mutate(round_cat2 = factor(round_cat2, levels = c("3-7", "8+")))
 ```
 
-Note that we're skipping the ~500 (out of ~65,000) observations with no fishing time. These are entirely from incomplete trips in 2021, which can't be compared apples-to-apples with completed trips anyways.
+Note that we're skipping the \~500 (out of \~65,000) observations with no fishing time. These are entirely from incomplete trips in 2021, which can't be compared apples-to-apples with completed trips anyways.
 
-::: {.panel-tabset}
-
+::::: panel-tabset
 ## Simple gam model
 
 We fit a generalized additive model with fixed effect of fin_mark and fishing duration, random effect of year, and smooth across day of year that differs by fin_mark. We assume a negative binomial distribution (more on that later).
 
-:::: {.panel-tabset}
-
+::: panel-tabset
 ```{r}
 ## GAM model -------------------------------------------
 
@@ -155,7 +151,6 @@ gam.check(out, rep = 500)
 
 These don't look great, and may reflect a mis-specified family.
 
-
 We use the Dharma package to look for model fit. Note that because this is simulation-based and we have MANY observations, the significance of tests for deviations are going to be inflated. I'm looking into solutions to this.
 
 ```{r}
@@ -168,16 +163,16 @@ testZeroInflation(simulationOutput)
 
 In general these seem okay. Not perfect, and maybe our dispersion is not great.
 
-
 Fun little bit of foreshadowing: we can look for the excess or deficit of particular values using Dharma. Here's what happens when we use the summary statistic of "Number of 10s in tehd ata").
+
 ```{r}
 count_tens = function(x) sum(x == 10)
 testGeneric(simulationOutput, summary = count_tens, alternative = "greater")
 
 ```
 
-
 ### calculating predicted distributions
+
 ```{r}
 dat.fit$fish_count_predicted = as.numeric(predict(out, newdata = dat.fit, type = "response"))
 dat.fit = dat.fit |>
@@ -247,6 +242,16 @@ gp.pred = freq.pred |>
   ggtitle("Predicted counts of AD fish")+
   xlim(c(-1,11))+
   theme_bw(base_size = 14)
+
+freq.pred |> 
+  ggplot(aes(x = predicted_count, y = expected_frequency))+
+  geom_col()+
+  ggtitle("")+
+  xlim(c(-1,11))+
+  facet_wrap(. ~fin_mark)+
+  labs(y = "Expected # of interviews",
+       x = "reported encounters")+
+  theme_bw(base_size = 18)
 
 
 ## AD marked
@@ -351,7 +356,6 @@ gp.cur
 
 ```
 
-
 ### a quick interpretation aside:
 
 Does that one observation of 16 unmarked fish stand out? Well, the model thinks we have a small but decreasing probability of reports of more than 10 unmarked encounters. In total, how many people to we expect to have more than 10 unmarked fish?
@@ -366,13 +370,13 @@ freq.pred |>
 
 ```
 
-About 3. So having one observation in that range is not surprising. 
+About 3. So having one observation in that range is not surprising.
 
 #### more aside
 
-But the model thinks we should have at least 3 people reporting more than 10 fish, and we only had 1! 
+But the model thinks we should have at least 3 people reporting more than 10 fish, and we only had 1!
 
-Isn't that a problem? 
+Isn't that a problem?
 
 Not really. As we move far away from our actual data, I don't put high trust in the exact values of the model predictions. There's some math involved, but instead we can imagine that we're tiny model goblins in charge of determining the frequencies we should see for different fish counts. We know the frequencies should fall as we get to higher and higher fish counts, but how rapidly should they fall? Well, past 10 fish, we only have one actual data point, so we are mostly guessing based on the rate of fall in the smaller fish counts. If we get that rate of fall incorrect, the predicted frequencies of fish_counts in the 20s and 30s might be off, but as long as those predictions are small our data will still seem to be a pretty good match to the predictions.
 
@@ -397,7 +401,6 @@ sum(freq.pred$predicted_count * freq.pred$expected_frequency)
 ```
 
 We're in the same ballpark, so probably fine.
-
 
 ### Rounding bias
 
@@ -477,7 +480,6 @@ bind_rows(obs.partial, pred.partial) |>
 
 ```
 
-
 ### Prestige bias
 
 ```{r}
@@ -543,21 +545,19 @@ bind_rows(pred.partial, obs.partial) |>
 ```
 
 That does not look like the high residuals were associated just with "did not have kept fish". In fact, the discrepency between prediction and obs seems even larger for the "had kept fish" category.
-
-::::
-
+:::
 
 ## Zero-inflated model
 
-Our model above looks like it may have had dispersion issues. Note that it is important that we try to find a model that correctly represents dispersion, as we're trying to look at the mismatch between observations and expectations for a range of fish_counts, including large fish_counts. 
+Our model above looks like it may have had dispersion issues. Note that it is important that we try to find a model that correctly represents dispersion, as we're trying to look at the mismatch between observations and expectations for a range of fish_counts, including large fish_counts.
 
 ### Model comparisons
 
 If our model is too constrained in terms of dispersion, we may be "forcing" discrepencies. A few ways to address dispersion:
 
-- Are we zero-inflated? Tests above did not seem to indicate that we were, but this is still worth checking
-- Is dispersion different between marked and unmarked fish?
-- Should we be using a different version of the negative binomial? e.g. scaling quadratically rather than linearly with the sum of our predictors?
+-   Are we zero-inflated? Tests above did not seem to indicate that we were, but this is still worth checking
+-   Is dispersion different between marked and unmarked fish?
+-   Should we be using a different version of the negative binomial? e.g. scaling quadratically rather than linearly with the sum of our predictors?
 
 Here I test a series of model structures to see what has the best support using AIC (for AIC, the lowest is the best.
 
@@ -697,17 +697,14 @@ df.models |>
   gt()
 ```
 
-
-We see the most support for `out.tmb3b` (sorry for the terrible naming conventions). This model has (a) zero-inflation that depends on fin marks, (b) separate dispersion/shape parameter estimation for marked and unmarked fish, and (c) an individual-based random effect. (c) is an especially confusing concept, but allows for additional overdispersion. See [I have a ref for this on my personal computer, need to grab it].
+We see the most support for `out.tmb3b` (sorry for the terrible naming conventions). This model has (a) zero-inflation that depends on fin marks, (b) separate dispersion/shape parameter estimation for marked and unmarked fish, and (c) an individual-based random effect. (c) is an especially confusing concept, but allows for additional overdispersion. See \[I have a ref for this on my personal computer, need to grab it\].
 
 We will move forward using this best model.
 
-
-:::: {.panel-tabset}
-
+::: panel-tabset
 ### Model diagnostics
 
-```{r} 
+```{r}
 ## rename for simplicity
 out.tmb = out.tmb3b
 resids = simulateResiduals(out.tmb)
@@ -715,7 +712,6 @@ plot(resids)
 ```
 
 This looks much better than our gam diagnostics.
-
 
 ### Calculating predictions
 
@@ -871,8 +867,6 @@ gp.cur = bind_rows(pred.partial, obs.partial) |>
 gp.cur
 ```
 
-
-
 ### Rounding bias
 
 ```{r}
@@ -951,7 +945,6 @@ bind_rows(obs.partial, pred.partial) |>
 
 ```
 
-
 ### Prestige bias
 
 ```{r}
@@ -1015,8 +1008,5 @@ bind_rows(pred.partial, obs.partial) |>
   labs(subtitle = "excluding <5s for visual clarity")+
   theme_bw(base_size = 14)
 ```
-
-::::
-
 :::
-
+:::::

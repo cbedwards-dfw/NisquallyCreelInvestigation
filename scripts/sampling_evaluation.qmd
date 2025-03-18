@@ -30,8 +30,9 @@ library(creelutils)
 library(tidyverse)
 library(here)
 library(gt)
-library(kableExtra)
-library(flextable)
+library(glue)
+# library(kableExtra)
+# library(flextable)
 ```
 
 ```{r}
@@ -72,9 +73,10 @@ report_tabs <- list()
 
 # survey frame representing all days open and closed in each fishery year created these objects in separate instances of CreelEstimates code using prep_days() and export them to data folder HumptulipsCreel repo
 # Specify file paths
-file_paths <- c("cleaned_data/days_Nisqually_2021.Rds",
-                "cleaned_data/days_Nisqually_2022.Rds",
-                "cleaned_data/days_Nisqually_2023.Rds")
+file_paths <- c(
+  here("cleaned_data", "days_Nisqually_2021.Rds"),
+  here("cleaned_data", "days_Nisqually_2022.Rds"),
+  here("cleaned_data", "days_Nisqually_2023.Rds"))
 
 report_tabs$all_dates <- file_paths |> 
   map(read_rds) |> 
@@ -102,42 +104,98 @@ report_tabs$combined_dates <- report_tabs$all_dates |>
     .cols = contains("surveyed"),
     .fns = ~ replace_na(.x, FALSE)
   )) |> 
-  select(-c(open_section_2)) |> 
-  rename(open_section = open_section_1) |> 
+  select(-c(open_section_1, open_section_3, open_section_4)) |> 
+  rename(open_section = open_section_2) |> # Nisqually, section 2 was consistently surveyed across all years
   select(event_date, starts_with(c("open", "surveyed"))) |> 
   pivot_longer(cols = starts_with(c("open", "surveyed")), 
                names_to = c(".value")) |> 
-  mutate(year = year(event_date), month = month(event_date)) 
-
-# Across the entire monitoring period, evaluate the number of open fishing days, survey days, proportion of open fishing days surveyed, and the number of closure days
-report_tabs$survey_dates_summary <- report_tabs$combined_dates |> 
-  summarise(
-    survey_days = sum(across(starts_with("surveyed"), ~ .x), na.rm = TRUE),
-    closure_days = sum(across(starts_with("open"), ~ !.x), na.rm = TRUE),
-    total_fishing_days = n() - closure_days,
-    proportion_surveyed = round(survey_days/total_fishing_days, 2)
+  mutate(year = year(event_date), month = month(event_date)) |> 
+  mutate( # Nisqually specific add on 
+    monitoring_period = if_else(event_date >= "2021-08-02", TRUE, FALSE)
   )
 
-# Grouping for year and month, evaluate the number of open fishing days, survey days, proportion of open fishing days surveyed, and the number of closure days
-report_tabs$combined_dates_monthly_p <- report_tabs$combined_dates |> 
-  select(event_date, open_section) |> # assumes by default single section section_num = 1
+# Across the entire monitoring period, evaluate the number of open fishing days, survey days, proportion of open fishing days surveyed, and the number of closure days
+
+# report_tabs$survey_dates_summary <- report_tabs$combined_dates |> 
+#   summarise(
+#     survey_days = sum(across(starts_with("surveyed"), ~ .x), na.rm = TRUE),
+#     closure_days = sum(across(starts_with("open"), ~ !.x), na.rm = TRUE),
+#     total_fishing_days = n() - closure_days,
+#     proportion_surveyed = round(survey_days/total_fishing_days, 2)
+#   )
+
+report_tabs$survey_dates_summary <- report_tabs$combined_dates |> 
+  summarise(
+    total_days = n(),
+    survey_days = sum(across(starts_with("surveyed"), ~ .x), na.rm = TRUE),
+    closure_days = sum(across(starts_with("open"), ~ !.x), na.rm = TRUE),
+    monitoring_period = sum(across(starts_with("monitoring"), ~ .x), na.rm = TRUE),
+    total_fishing_days = n() - closure_days,
+    total_fishing_days_monitoring_period = monitoring_period - closure_days,
+    proportion_surveyed_all_dates = round(survey_days/total_fishing_days, 2),
+    proportion_surveyed_monitoring_period = round(survey_days/total_fishing_days_monitoring_period, 2)
+  )
+
+
+
+# Grouping for year, evaluate the number of open fishing days, survey days, proportion of open fishing days surveyed, and the number of closure days
+report_tabs$combined_dates_annual_p <- report_tabs$combined_dates |> 
+  select(event_date, open_section, monitoring_period) |> # assumes by default single section section_num = 1
   left_join(report_tabs$survey_dates, by = "event_date") |> 
    mutate(across(
     .cols = contains("surveyed"),
     .fns = ~ replace_na(.x, FALSE)
   )) |> 
-  select(event_date, starts_with(c("open", "surveyed"))) |> 
+  select(event_date, starts_with(c("open", "surveyed", "monitoring"))) |> 
+  mutate(year = year(event_date), month = month(event_date)) |> 
+  group_by(year) |>
+summarise(
+    survey_days = sum(across(starts_with("surveyed"), ~ .x), na.rm = TRUE),
+    closure_days = sum(across(starts_with("open"), ~ !.x), na.rm = TRUE),
+    monitoring_period = sum(across(starts_with("monitoring"), ~ .x), na.rm = TRUE),
+    total_fishing_days = n() - closure_days,
+    total_fishing_days_monitoring_period = monitoring_period - closure_days,
+    proportion_surveyed_all_dates = round(survey_days/total_fishing_days, 2),
+    proportion_surveyed_monitoring_period = round(survey_days/total_fishing_days_monitoring_period, 2)
+  )
+
+
+# Grouping for year and month, evaluate the number of open fishing days, survey days, proportion of open fishing days surveyed, and the number of closure days
+report_tabs$combined_dates_monthly_p <- report_tabs$combined_dates |> 
+  select(event_date, open_section, monitoring_period) |> # assumes by default single section section_num = 1
+  left_join(report_tabs$survey_dates, by = "event_date") |> 
+   mutate(across(
+    .cols = contains("surveyed"),
+    .fns = ~ replace_na(.x, FALSE)
+  )) |> 
+  select(event_date, starts_with(c("open", "surveyed", "monitoring"))) |> 
   mutate(year = year(event_date), month = month(event_date)) |> 
   group_by(year, month) |>
 summarise(
     survey_days = sum(across(starts_with("surveyed"), ~ .x), na.rm = TRUE),
     closure_days = sum(across(starts_with("open"), ~ !.x), na.rm = TRUE),
+    monitoring_period = sum(across(starts_with("monitoring"), ~ .x), na.rm = TRUE),
     total_fishing_days = n() - closure_days,
-    proportion_surveyed = round(survey_days/total_fishing_days, 2),
-    greater_than_50 = if_else(proportion_surveyed >= 0.5, 1, 0),
-    less_than_50 = if_else(proportion_surveyed < 0.2, 1, 0)
-  )
+    total_fishing_days_monitoring_period = monitoring_period - closure_days,
+    proportion_surveyed_all_dates = round(survey_days/total_fishing_days, 2),
+    proportion_surveyed_monitoring_period = round(survey_days/total_fishing_days_monitoring_period, 2)
+  ) 
+# |> 
+#   mutate(
+#     proportion_surveyed_monitoring_period = if_else(is.nan(proportion_surveyed_monitoring_period), 0, proportion_surveyed_monitoring_period)
+#   )
 
+
+report_tabs$survey_dates_monthly_summary <- report_tabs$combined_dates_monthly_p |>
+  ungroup() |> 
+  # group_by(year, month) |>
+  summarise(
+    mean = mean(proportion_surveyed_monitoring_period, na.rm = TRUE),
+    sd = sd(proportion_surveyed_monitoring_period, na.rm = TRUE),
+    max = max(proportion_surveyed_monitoring_period, na.rm = TRUE),
+    min = min(proportion_surveyed_monitoring_period, na.rm = TRUE)
+  ) |> 
+  mutate(across(mean:min, ~ round(.x, 2)))
 
 ```
 
@@ -201,24 +259,29 @@ report_tabs$survey_dates_monthly_p <- report_tabs$combined_dates |>
 
 ### Survey days and closures
 
-Over the study period, a roving creel survey was conducted on the `r params$focal_waterbody` on `r report_tabs$survey_dates_summary[1]` out of the `r report_tabs$survey_dates_summary[3]` (`r round((report_tabs$survey_dates_summary[1]/report_tabs$survey_dates_summary[3]*100), 0)`%) days that the fishery was open. At the monthly time step the sampled proportion of open fishing days among months was relatively consistent, as `r sum(report_tabs$combined_dates_monthly_p$greater_than_50)` of the `r nrow(report_tabs$combined_dates_monthly_p)` months had between 50% and 60% of days sampled, and one month, November 2023, where `r round(report_tabs$combined_dates_monthly_p[7,6]*100, 0)` of open fishing were sampled (Figure \_). In October 2022 the number of open fishing days were reduced due to an emergency closure from October 8, 2022 to October 28, 2022, due to low flow conditions. In December 2022 the upper section of the river from the Highway 101 Bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers was closed from December 1, 2022 to December 31st, and the lower section of the river from the mouth to the Highway 101 bridge was closed from December 17, 2022 to December 31, 2022. In December 2023 the entire fishery area was closed by emergency rule.
+During the monitoring period, a roving creel survey was conducted on the `r params$focal_waterbody` on `r report_tabs$survey_dates_summary[2]` out of the `r report_tabs$survey_dates_summary[6]` (`r round((report_tabs$survey_dates_summary[8]*100), 0)`%) days that the fishery was open. At the monthly time step the mean sampled proportion of open fishing days was `r report_tabs$survey_dates_monthly_summary$mean` 
+
+FISHERY SPECIFIC CLOSURE DATES
 
 ```{r}
 #| echo: false
 
 report_tabs$combined_dates_monthly_p |> 
-  select(-c(greater_than_50, less_than_50)) |> 
-  select(month, open_fishing_days = total_fishing_days, survey_days, proportion_surveyed, closure_days) |> 
+  drop_na(proportion_surveyed_monitoring_period) |> 
+  # select(-c(greater_than_50, less_than_50)) |> 
+  select(month, open_fishing_days = total_fishing_days, survey_days, proportion_surveyed_monitoring_period, closure_days) |> 
    rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |> 
-  gt(caption = "Table _. The number of open fishing days, survey days, proportion of open fishing days surveyed, and the number of closure days per month during the 2022 and 2023 salmon fishery in the Humptulips River. Surveys were conducted from September 1, 2022 to November 29, 2023. The fishery was closed through emergency regulations from October 8-28, 2022 due to drought conditions. The upper section of the river from the Highway 101 Bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers was closed from December 1-31, 2022, and the lower section of the river from the mouth to the Highway 101 bridge  was closed from December 17-31, 2022. In December 2023 the fishery was closed by emergency rule.")
+gt(caption = glue("Table _. The number of open fishing days, survey days, proportion of open fishing days within each monitoring period surveyed, and the number of closure days per month during the Nisqually River salmon fishery from 2021 to 2023."))
+
 ```
 
 ```{r}
 #| echo: false
-#| fig.cap: "Figure _. The number of open fishing days, survey days, and closure days per month during the 2022 and 2023 Humptulips River salmon fisheries. Surveys were conducted from September 1, 2022 to November 29, 2023. The fishery was closed through emergency regulations from October 8-28, 2022 due to drought conditions. The upper section of the river from the Highway 101 Bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers was closed from December 1-31, 2022, and the lower section of the river from the mouth to the Highway 101 bridge  was closed from December 17-31, 2022. In December 2023 the fishery was closed by emergency rule."
+#| fig.cap: "Figure _. The number of open fishing days, survey days, and closure days per month during the Nisqually River salmon fishery from 2021 to 2023.."
 
 
 report_tabs$combined_dates_monthly_p |>
+  drop_na(proportion_surveyed_monitoring_period) |> 
   select(year, month, open_fishing_days = total_fishing_days, closure_days, survey_days) |> 
   pivot_longer(cols = c(open_fishing_days, survey_days, closure_days),
                names_to = "day_type",
@@ -239,10 +302,11 @@ report_tabs$combined_dates_monthly_p |>
 
 ```{r}
 #| echo: false
-#| fig.cap: "Figure _. The proportion of days open to fishing per month that a roving creel survey was conducted in 2022 and 2023 on the Humptulips River. Surveys were conducted from September 1, 2022 to November 29, 2023. The fishery was closed through emergency regulations from October 8-28, 2022 due to drought conditions. The upper section of the river from the Highway 101 Bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers was closed from December 1-31, 2022, and the lower section of the river from the mouth to the Highway 101 bridge  was closed from December 17-31, 2022. In December 2023 the fishery was closed by emergency rule."
+#| fig.cap: "Figure _. The proportion of days open to fishing per month that a roving creel survey was conducted during the Nisqually River salmon fishery from 2021 to 2023."
 
 report_tabs$combined_dates_monthly_p |>
-ggplot(aes(x = month, y = proportion_surveyed)) +
+drop_na(proportion_surveyed_monitoring_period) |> 
+ggplot(aes(x = month, y = proportion_surveyed_monitoring_period)) +
   geom_bar(stat = "identity", fill = "steelblue", color = "black") +
   facet_wrap(~ year, ncol = 1, scales = "free_y") +
   scale_y_continuous(limits = c(0, 1)) +
@@ -265,15 +329,26 @@ dwg$interview <-
       study_design = params$study_design
     )
 
+source(here("scripts", "prep_dwg_interview_angler_types_1.1.R"))     
+
 dwg$interview <- 
-    CreelEstimateR::prep_dwg_interview_angler_types(
+    prep_dwg_interview_angler_types(
       interview_fishing_time = dwg$interview,
       study_design = params$study_design,
       boat_type_collapse = params$boat_type_collapse,
       fish_location_determines_type = params$fish_location_determines_type,
       angler_type_kayak_pontoon = params$angler_type_kayak_pontoon
     )
-      
+
+# dwg$interview <- 
+#     CreelEstimateR::prep_dwg_interview_angler_types(
+#       interview_fishing_time = dwg$interview,
+#       study_design = params$study_design,
+#       boat_type_collapse = params$boat_type_collapse,
+#       fish_location_determines_type = params$fish_location_determines_type,
+#       angler_type_kayak_pontoon = params$angler_type_kayak_pontoon
+#     )
+ 
 ```
 
 ### Angler interviews
@@ -282,6 +357,14 @@ dwg$interview <-
 #| echo: false
 
 # summarize the number of interviews obtained by year and angler type 
+# report_tabs$interview_totals <- dwg$interview |> group_by(year) |> mutate(annual_total_interviews = n_distinct(interview_id)) |> 
+#   group_by(year, angler_final, annual_total_interviews) |> 
+#   summarise(
+#     total_angler_count = sum(angler_count),
+#     total_individual_count = sum(total_group_count),
+#     annual_interview_group_count = n_distinct(interview_id)
+#     )
+
 report_tabs$interview_totals <- dwg$interview |> group_by(year) |> mutate(annual_total_interviews = n_distinct(interview_id)) |> 
   group_by(year, angler_final, annual_total_interviews) |> 
   summarise(
@@ -289,6 +372,8 @@ report_tabs$interview_totals <- dwg$interview |> group_by(year) |> mutate(annual
     total_individual_count = sum(total_group_count),
     annual_interview_group_count = n_distinct(interview_id)
     )
+
+
 
 # summarize the number of interviews obtained by trip_status (complete/incomplete trips)
 report_tabs$trip_status_summary <- dwg$interview |> 
@@ -301,13 +386,18 @@ report_tabs$trip_status_summary <- dwg$interview |>
   )
 
 # pull out the total number of interviews obatined in section 2
-report_tabs$section_2_interviews <- dwg$interview |> filter(section_num == 2) |>  count(year, section_num) |> summarise(sum(n)) |> pluck() 
+report_tabs$section_1_interviews <- dwg$interview |> filter(section_num == 1) |>  count(year, section_num) |> summarise(sum(n)) |> pluck() 
+
+# pull out the total number of interviews obatined in section 2
+report_tabs$section_3_interviews <- dwg$interview |> filter(section_num == 3) |>  count(year, section_num) |> summarise(sum(n)) |> pluck() 
+
+# pull out the total number of interviews obatined in section 2
+report_tabs$section_4_interviews <- dwg$interview |> filter(section_num == 4) |>  count(year, section_num) |> summarise(sum(n)) |> pluck() 
+
 
 ```
 
-In `r report_tabs$interview_totals[1,1]`, a total of `r report_tabs$interview_totals[1,3]` interviews were obtained, representing `r report_tabs$interview_totals[1,6]` `r report_tabs$interview_totals[1,2]` angler groups and `r report_tabs$interview_totals[2,6]` `r report_tabs$interview_totals[2,2]` angler groups. The majority of bank anglers contacted had completed their fishing trips (`r report_tabs$trip_status_summary[1,4]`/`r report_tabs$trip_status_summary[1,5]`; `r report_tabs$trip_status_summary[1,6]`%). Virtually all boat anglers contacted had also completed their angling trip (`r report_tabs$trip_status_summary[3,4]`/`r report_tabs$trip_status_summary[3,5]`; `r report_tabs$trip_status_summary[3,6]`%)
-
-In `r report_tabs$interview_totals[3,1]`, a total of `r report_tabs$interview_totals[3,3]` interviews were obtained, representing `r report_tabs$interview_totals[3,6]` `r report_tabs$interview_totals[3,2]` angler group interviews and `r report_tabs$interview_totals[4,6]` `r report_tabs$interview_totals[4,2]` angler group interviews. The vast majority of interviews were obtained in section 1. Again, the majority of bank anglers contacted had completed their fishing trips (`r report_tabs$trip_status_summary[5,4]`/`r report_tabs$trip_status_summary[5,5]`; `r report_tabs$trip_status_summary[5,6]`%), but sampling in 2023 reflected an increase the number of bank anglers contacted mid-trip. Similar to sampling in 2022, virtually all boat anglers contacted had also completed their angling trip (`r report_tabs$trip_status_summary[7,4]`/`r report_tabs$trip_status_summary[7,5]`; `r report_tabs$trip_status_summary[7,6]`%). Across 2022 and 2023 very few interviews were obtained in section 2 (*n* = `r report_tabs$section_2_interviews`), representing the upper river from the Highway 101 bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers, due to limited sampler access (Table \_).
+In `r report_tabs$interview_totals[1,1]`, sampling for interviews only occurred in section 2, where we obtained a total of `r report_tabs$interview_totals[1,3]` interviews were obtained, representing `r report_tabs$interview_totals[1,6]` `r report_tabs$interview_totals[1,2]` angler groups and `r report_tabs$interview_totals[2,6]` `r report_tabs$interview_totals[2,2]` angler groups. In `r report_tabs$interview_totals[3,1]`, a total of `r report_tabs$interview_totals[3,3]` interviews were obtained, representing `r report_tabs$interview_totals[3,6]` `r report_tabs$interview_totals[3,2]` angler group interviews and `r report_tabs$interview_totals[4,6]` `r report_tabs$interview_totals[4,2]` angler group interviews. In `r report_tabs$interview_totals[5,1]`, a total of `r report_tabs$interview_totals[5,3]` interviews were obtained, representing `r report_tabs$interview_totals[5,6]` `r report_tabs$interview_totals[5,2]` angler group interviews and `r report_tabs$interview_totals[6,6]` `r report_tabs$interview_totals[6,2]` angler group interviews. Across all years the vast majority of interviews were obtained in section 2. Despite an expanded sampling area in 2022 and 2023, few interviews were obtained in section 1 (*n* = `r report_tabs$section_1_interviews`), section 3 (*n* = `r report_tabs$section_3_interviews`), and section 4 (*n* = `r report_tabs$section_4_interviews`), due to limited sampler access and lower effort in these areas (Table \_).
 
 ```{r interview_and_catch}
 #| echo: false
@@ -317,7 +407,7 @@ dwg$interview |>
   arrange(year, section_num, angler_final) |> 
   select(year, section_number = section_num, angler_type = angler_final, count = n) |> 
   rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |> 
-  gt(caption = "Table _. The number of interviews obtained during roving creel surveys, grouped by year, section, and angler type.") 
+  gt(caption = "Table _. The number of interviews obtained during roving creel surveys, grouped by year, section, and angler type during the Nisqually River salmon fishery from 2021 to 2023.") 
 
 ```
 
@@ -352,12 +442,13 @@ dwg$interview |>
  dwg$interview |>
   group_by(year, month, angler_final) |>
   summarise(
-    total_angler_count = sum(angler_count),
-    total_individual_count = sum(total_group_count)
+    total_angler_count = sum(angler_count)
+    # ,
+    # total_individual_count = sum(total_group_count) # this should be toggled by params$person_count_type! 
     ) |>
   rename(angler_type = angler_final) |>
   rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |>
-  ggplot(aes(x = as.factor(Month), y = `Total individual count`, fill = `Angler type`)) +
+  ggplot(aes(x = as.factor(Month), y = `Total angler count`, fill = `Angler type`)) +
   geom_bar(stat = "identity", position = position_stack(), color = "black") +
   facet_wrap(~ Year, scales = "free_x") +
   scale_x_discrete(limits = c('9', '10', '11', '12')) +
@@ -373,7 +464,7 @@ dwg$interview |>
 
 ```{r}
 #| echo: FALSE
-#| fig.cap: "Figure _. The number of interviews obtained, categorized by bank (blue) and boat (orange) angling groups, per month on the Humptulips River from September 1, 2022 to November 29, 2023. The fishery was closed through emergency regulations from October 8-28, 2022 due to drought conditions. The upper section of the river from the Highway 101 Bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers was closed from December 1-31, 2022, and the lower section of the river from the mouth to the Highway 101 bridge  was closed from December 17-31, 2022. In December 2023 the fishery was closed by emergency rule."
+#| fig.cap: "Figure _. The number of interviews obtained, categorized by bank (blue) and boat (orange) angling groups, per month during the Nisqually River salmon fishery from 2021 to 2023."
 
 
 # number of angler groups interviewed (equivalent to # of interviews obtained)
@@ -399,7 +490,8 @@ dwg$interview |>
 #| echo: FALSE
  
 report_tabs$mean_trip_length_monthly <- dwg$interview |> 
-  filter(trip_status == "Complete", previously_interviewed == 0) |>
+  # filter(trip_status == "Complete", previously_interviewed == 0) |> # depends on whether field previsouly_interviewed was used!
+  filter(trip_status == "Complete") |> 
   group_by(year, month, angler_final) |> 
   summarize(
     n_completed_angler_trips = n(),
@@ -417,8 +509,9 @@ report_tabs$mean_trip_length_monthly <- dwg$interview |>
 ```
 
 ```{r}
-#| echo: FALSE
-#| fig.cap: "Figure _. Mean monthly trip time (± SD) of bank (blue) and boat (orange) angling groups surveyed on the Humptulips River during 2022 and 2023. Surveys were conducted from September 1, 2022 to November 29, 2023. The fishery was closed through emergency regulations from October 8-28, 2022 due to drought conditions. The upper section of the river from the Highway 101 Bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers was closed from December 1-31, 2022, and the lower section of the river from the mouth to the Highway 101 bridge  was closed from December 17-31, 2022. In December 2023 the fishery was closed by emergency rule."
+#| echo: false
+#| include: false
+#| fig.cap: "Figure _. Mean monthly trip time (± SD) of bank (blue) and boat (orange) angling groups surveyed on during the Nisqually River salmon fishery from 2021 to 2023."
 
 # Generate bar plot with error bars
 report_tabs$mean_trip_length_monthly |> 
@@ -469,12 +562,12 @@ dplyr::select(-catch_group) |>
 ```{r in-line catch table Chinook}
 #| echo: false
 #| results: asis
-#| include: false
+#| include: true
 
 report_tabs$Chinook_raw_catches <- dwg$interview_catch |> 
   dplyr::filter(!is.na(fish_count)) |>
   mutate(fin_mark = fct_relevel(fin_mark, "Adipose fin clipped", "Unmarked", "Unknown")) |> 
-  dplyr::filter(species == "Chinook", life_stage == "Adult") |>
+  dplyr::filter(species == "Chinook") |>
   dplyr::group_by(year, species, life_stage, fin_mark, fate) |>
   dplyr::summarise(count = sum(fish_count), .groups = "drop") |> 
   arrange(year, species, life_stage, fin_mark, fate) |> 
@@ -494,15 +587,43 @@ tables_by_year_Chinook[[1]]
 
 tables_by_year_Chinook[[2]]
 
+tables_by_year_Chinook[[3]]
+
+```
+
+```{r in-line catch table pink}
+#| include: true
+
+report_tabs$pink_raw_catches <- dwg$interview_catch |>
+  dplyr::filter(!is.na(fish_count)) |>
+  mutate(fin_mark = fct_relevel(fin_mark, "Adipose fin clipped", "Unmarked", "Unknown")) |> 
+  dplyr::filter(species == "Pink") |>
+  dplyr::group_by(year, species, life_stage, fin_mark, fate) |>
+  dplyr::summarise(count = sum(fish_count), .groups = "drop") |>
+  arrange(year, species, life_stage, fin_mark, fate) |>
+  rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence())
+
+# Split data by year and generate gt tables
+tables_by_year_pink <- report_tabs$pink_raw_catches |>
+  group_split(Year) |>
+  lapply(function(df) {
+    df |>
+      gt(caption = paste("Total catches of pink salmon in", unique(df$Year), "reported during angler interviews and summarized by life stage, mark status, and fate. Note that these data represent raw catches and are not expanded for angler effort."))
+  })
+
+tables_by_year_pink[[1]]
+
+tables_by_year_pink[[2]]
+
 ```
 
 ```{r in-line catch table Coho}
-#| include: false
+#| include: true
 
 report_tabs$coho_raw_catches <- dwg$interview_catch |>
   dplyr::filter(!is.na(fish_count)) |>
   mutate(fin_mark = fct_relevel(fin_mark, "Adipose fin clipped", "Unmarked", "Unknown")) |> 
-  dplyr::filter(species == "Coho", life_stage == "Adult") |>
+  dplyr::filter(species == "Coho") |>
   dplyr::group_by(year, species, life_stage, fin_mark, fate) |>
   dplyr::summarise(count = sum(fish_count), .groups = "drop") |>
   arrange(year, species, life_stage, fin_mark, fate) |>
@@ -519,6 +640,8 @@ tables_by_year_Coho <- report_tabs$coho_raw_catches |>
 tables_by_year_Coho[[1]]
 
 tables_by_year_Coho[[2]]
+
+tables_by_year_Coho[[3]]
 
 ```
 

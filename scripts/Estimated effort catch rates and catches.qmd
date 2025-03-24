@@ -1,0 +1,984 @@
+---
+title: "Estimated effort, catch rates, and catches"
+execute:
+    echo: false
+author: "Evan Booher"
+format:
+  docx: 
+    reference-doc: "WDFW_Report_Template.docx"
+    fig-dpi: 600
+editor: visual
+params:
+  focal_waterbody: "Humptulips River"
+  study_design: "Standard"  
+  boat_type_collapse: "Yes"
+  fish_location_determines_type: "No"
+  angler_type_kayak_pontoon: "bank" 
+  person_count_type: "angler"
+  period_pe: "week"
+  period_bss: "day"
+  days_wkend: "!r c('Saturday', 'Sunday')"
+  day_length_expansion: "night closure"
+  min_fishing_time: 0.5
+---
+
+```{r, echo = FALSE}
+#| echo: false
+
+library(CreelEstimateR)
+library(creelutils)
+library(tidyverse)
+library(here)
+library(gt)
+library(kableExtra)
+library(flextable)
+library(glue)
+```
+
+Need a workaround for the current problem with uploading to database estimates using the "|" operator for combining multiple levels of catch group fields. Maybe for now load all locally?
+
+This will require a brief switchboard to refactor to database stored data formatting! 
+
+
+```{r read in creel estimates}
+#| echo: false
+
+# Load .RData file into a new environment
+# file_path <- here("cleaned_data/creel_estimates/creel_estimates_45884e82-378d-4ca2-877b-42df0507d716.RData")
+
+
+# Dynamically create the folder path using pasted params
+folder_path <- here::here(paste0("cleaned_data", "/", "creel_estimates"))
+
+# Get a list of all .RData files in the folder
+rdata_files <- list.files(path = folder_path, pattern = "\\.RData$", full.names = TRUE, ignore.case = TRUE)
+
+# Initialize an empty list to store loaded data
+rdata_list <- list()
+
+# Process each .RData file
+for (file in rdata_files) {
+  # Extract analysis ID from the file name (text after "creel_estimates")
+  analysis_id <- sub(".*creel_estimates(.*)\\.RData$", "\\1", basename(file))
+  
+  # Create a temporary environment to load the .RData file's contents
+  temp_env <- new.env()
+  load(file, envir = temp_env)  # Load the .RData file into the temporary environment
+  
+  # Store the objects from the temporary environment as a list
+  rdata_list[[analysis_id]] <- as.list(temp_env)
+  
+  # Clean up the temporary environment
+  rm(temp_env)
+}
+
+# Print summary of the loaded data (optional)
+# print(lapply(rdata_list, function(x) lapply(x, summary)))
+```
+
+```{r combine into one table}
+#| echo: false
+
+# Iterate over all unique analysis IDs in rdata_list and bind creel_estimates
+combined_creel_estimates <- map_dfr(
+  names(rdata_list), # Loop over each analysis ID
+  ~ {
+    analysis_id <- .x
+    creel_list <- rdata_list[[analysis_id]]$creel_estimates
+
+    # Bind all tibbles within creel_estimates and add a column for analysis_id
+    map_dfr(names(creel_list), ~ {
+      tibble_name <- .x
+      creel_list[[tibble_name]] %>% 
+        mutate(source = tibble_name, analysis_id = analysis_id)
+    })
+  }
+) |> 
+  filter(!analysis_id == "b4ebc2df-3bfd-4ae0-80ac-46f0f18b7be3") |> 
+  separate(
+    col = est_cg,
+    into = c("species", "life_stage", "fin_mark", "fate"),
+    sep = "_",
+    remove = FALSE
+  ) |> 
+  rename(angler_type_name = angler_final, catch_group = est_cg)
+
+# test <- combined_creel_estimates |> filter(analysis_id == "5520497b-4171-43a5-a453-9d5130c7e44a")
+# straum <- combined_creel_estimates |> 
+#     filter(
+#       model_type %in% c("BSS","PE"),
+#       estimate_category %in% c("effort","E_sum"),
+#       estimate_type %in% c("estimate_sum", "mean", "quantile_lower_2_5", "quantile_lower_25", "quantile_median_50", "quantile_upper_75", "quantile_upper_97_5")) |> 
+#       group_by(year, model_type, estimate_type) |> 
+#     summarise(estimate_value = mean(estimate_value, .groups = "drop")) 
+```
+
+
+```{r query data}
+#| echo: false
+#| include: false
+#| eval: false
+
+# fisheries <- c("Nisqually salmon 2022", "Nisqually salmon 2023")
+# 
+# catch <- list()
+# effort <- list()
+# 
+# # Fetch / load data
+# # Prompts for user password if ran interactively and actively queries the creel database. This result is saved locally.
+# # However, if rendering the quarto document, it will load the local copy of the model estimates.
+# if (interactive()) {
+#   creel_estimates <- list()
+#   
+#   # establish connection
+#   con <- creelutils::establish_db_con()
+# 
+#   # query analysis_lut
+#   creel_estimates$analysis_lut <- creelutils::fetch_db_table(
+#     con, "creel", "model_analysis_lut") |> 
+#     # fishery name ends at the first underscore of analysis name field
+#     mutate(fishery_name = stringr::str_extract(analysis_name, "^[^_]+")) |> 
+#     relocate(fishery_name, .after = "analysis_name") |> 
+#     filter(fishery_name %in% fisheries) |> 
+#     mutate(date = lubridate::as_date(created_datetime), .after = "created_datetime")
+#   
+#   # separate upload events by date
+#   upload_dates <- creel_estimates$analysis_lut |>
+#     group_by(date) |> 
+#     select(date) |> 
+#     distinct()
+#   
+#   # first_upload <- upload_dates |> filter(date %in% c("2025-02-11", "2025-03-04"))
+#   second_upload <- upload_dates |> filter(date %in% c("2025-03-11", "2025-03-12", "2025-03-13"))
+#   
+#   # inner join to filter analysis_lut into groups
+#   # first_upload <- first_upload |> inner_join(creel_estimates$analysis_lut, by = "date")
+#   second_upload <- second_upload |> inner_join(creel_estimates$analysis_lut, by = "date")
+#   
+#   # query tables for each group to allow before / after comparison
+#   # second run included section 2 and all catch groups
+#   
+#   # 1st
+#   # creel_estimates$total_first <- creelutils::fetch_db_table(
+#   #   con, "creel", "vw_model_estimates_total",
+#   #   filter = c("analysis_id %in% first_upload$analysis_id")) 
+#   # 
+#   # creel_estimates$stratum_first <- creelutils::fetch_db_table(
+#   #   con, "creel", "vw_model_estimates_stratum",
+#   #   filter = c("analysis_id %in% first_upload$analysis_id"))
+#   
+#   # 2nd
+#   creel_estimates$total <- creelutils::fetch_db_table(
+#     con, "creel", "vw_model_estimates_total",
+#     filter = c("analysis_id %in% second_upload$analysis_id")) 
+#   
+#   creel_estimates$stratum <- creelutils::fetch_db_table(
+#     con, "creel", "vw_model_estimates_stratum",
+#     filter = c("analysis_id %in% second_upload$analysis_id"))
+#   
+#   # query total table
+#   # creel_estimates$total <- creelutils::fetch_db_table(
+#   #   con, "creel", "vw_model_estimates_total",
+#   #   filter = c("analysis_id %in% creel_estimates$analysis_lut$analysis_id")) 
+#   # 
+#   # # query stratum table
+#   # creel_estimates$stratum <- creelutils::fetch_db_table(
+#   #   con, "creel", "vw_model_estimates_stratum",
+#   #   filter = c("analysis_id %in% creel_estimates$analysis_lut$analysis_id"))
+#   
+#   # save queried model estimates as local file
+#   # needed for knitting as rstudioapi:: functions cannot be used during a Quarto render
+#   save(creel_estimates, file = "./data/creel_estimates.Rdata")
+#   
+# } else {
+#   # load previous export of estimates saved locally during a Quarto render
+#   load("./data/creel_estimates.Rdata")
+# }
+
+```
+
+```{r recode fin mark field}
+#| include: false
+#| echo: false
+#| eval: false
+
+# modify labeling for fin_mark field
+# creel_estimates <- purrr::map_at(
+#   creel_estimates, c(2,3), # removed the first upload group
+#   ~ mutate(.x, fin_mark_desc = case_when(
+#       fin_mark_desc == "Adclip clip + No other external marks" ~ "AD",
+#       fin_mark_desc == "No Adclip + No Other external marks" ~ "UM",
+#       fin_mark_desc == "Unknown Adipose + Unknown fin clip" ~ "UNK",
+#       TRUE ~ fin_mark_desc
+#     ))
+#   )
+```
+
+```{r mutate and rename, post-script format}
+#| echo: false
+
+report_estimates <- list()
+
+# add useful date variables
+report_estimates$total <- combined_creel_estimates |>
+  filter(source == "total") |> 
+  # mutate(
+  #   month = lubridate::month(.data$min_event_date),
+  #   year = lubridate::year(.data$min_event_date),
+  #   week = lubridate::week(.data$min_event_date)
+  # ) |> 
+  # rename(species = species_name, life_stage = life_stage_name, fin_mark = fin_mark_desc, fate = fate_name) |> 
+    mutate(
+    fin_mark = case_when(
+      fin_mark == "AD" ~ "Adipose fin clipped",
+      fin_mark == "UM" ~ "Unmarked",
+      fin_mark == "UNK" ~ "Unknown",
+      fin_mark == "UM|AD|UNK" ~ "All fin mark groups",
+      TRUE ~ fin_mark
+    ),
+    fate = case_when(
+      fate == "Released|Kept" ~ "Total encounters",
+      TRUE ~ fate
+    )) |> 
+    # catch_group = paste(species, 
+    #     life_stage, fin_mark, fate, sep = "_")) |> 
+     mutate(
+    month = lubridate::month(.data$min_event_date),
+    year = lubridate::year(.data$min_event_date),
+    week = lubridate::week(.data$min_event_date),
+    julian_date = lubridate::yday(.data$min_event_date)
+  )
+
+report_estimates$stratum <- combined_creel_estimates |> 
+  filter(source == "stratum") |> 
+ mutate(
+    month = lubridate::month(.data$min_event_date),
+    year = lubridate::year(.data$min_event_date),
+    week = lubridate::week(.data$min_event_date)
+  ) |> 
+  # rename(species = species_name, life_stage = life_stage_name, fin_mark = fin_mark_desc, fate = fate_name) |> 
+    mutate(
+    fin_mark = case_when(
+      fin_mark == "AD" ~ "Adipose fin clipped",
+      fin_mark == "UM" ~ "Unmarked",
+      fin_mark == "UNK" ~ "Unknown",
+      fin_mark == "UM|AD|UNK" ~ "All fin mark groups",
+      TRUE ~ fin_mark
+    ),
+    fate = case_when(
+      fate == "Released|Kept" ~ "Total encounters",
+      TRUE ~ fate
+    )) |> 
+    # catch_group = paste(species, 
+    #     life_stage, fin_mark, fate, sep = "_")) |> 
+     mutate(
+    month = lubridate::month(.data$min_event_date),
+    year = lubridate::year(.data$min_event_date),
+    week = lubridate::week(.data$min_event_date),
+    julian_date = lubridate::yday(.data$min_event_date)
+  )
+
+```
+
+```{r mutate and rename, database format}
+#| echo: false
+#| eval: false
+#| include: false
+
+report_estimates <- list()
+
+# add useful date variables
+report_estimates$total <- creel_estimates$total |> 
+ mutate(
+    month = lubridate::month(.data$min_event_date),
+    year = lubridate::year(.data$min_event_date),
+    week = lubridate::week(.data$min_event_date)
+  ) |> 
+  rename(species = species_name, life_stage = life_stage_name, fin_mark = fin_mark_desc, fate = fate_name) |> 
+    mutate(
+    fin_mark = case_when(
+      fin_mark == "AD" ~ "Adipose fin clipped",
+      fin_mark == "UM" ~ "Unmarked",
+      fin_mark == "UNK" ~ "Unknown",
+      TRUE ~ fin_mark
+    ),
+    catch_group = paste(species, 
+        life_stage, fin_mark, fate, sep = "_")) |> 
+     mutate(
+    month = lubridate::month(.data$min_event_date),
+    year = lubridate::year(.data$min_event_date),
+    week = lubridate::week(.data$min_event_date),
+    julian_date = lubridate::yday(.data$min_event_date)
+  )
+
+report_estimates$stratum <- creel_estimates$stratum |> 
+ mutate(
+    month = lubridate::month(.data$min_event_date),
+    year = lubridate::year(.data$min_event_date),
+    week = lubridate::week(.data$min_event_date)
+  ) |> 
+  rename(species = species_name, life_stage = life_stage_name, fin_mark = fin_mark_desc, fate = fate_name) |> 
+    mutate(
+    fin_mark = case_when(
+      fin_mark == "AD" ~ "Adipose fin clipped",
+      fin_mark == "UM" ~ "Unmarked",
+      fin_mark == "UNK" ~ "Unknown",
+      TRUE ~ fin_mark
+    ),
+    catch_group = paste(species, 
+        life_stage, fin_mark, fate, sep = "_")) |> 
+     mutate(
+    month = lubridate::month(.data$min_event_date),
+    year = lubridate::year(.data$min_event_date),
+    week = lubridate::week(.data$min_event_date),
+    julian_date = lubridate::yday(.data$min_event_date)
+  )
+
+```
+
+## Estimated effort, catch rates, and catches
+
+### Fishing effort estimates
+
+Estimated total fishing effort for each fishery using both modeling approaches.
+
+```{r seasonal total fishing effort data prep}
+#| echo: false
+
+# effort_total_table <- function(creel_estimates, upload = NULL) {
+  
+  # validate inputs, #2 uploads so far.
+  # uploads <- c(1,2)
+  # if (!upload %in% uploads) {
+  #   stop("effort_total_table: invalid 'upload' argument'.")
+  # }
+
+  # #substitute first suffix to work in existing code
+  # if (upload == 1) {
+  #   creel_estimates$total <- creel_estimates$total_first
+  #   creel_estimates$stratum <- creel_estimates$stratum_first
+  # } else {
+  #   # substitute second upload
+  #   creel_estimates$total <- creel_estimates$total_second
+  #   creel_estimates$stratum <- creel_estimates$stratum_second
+  # }
+  
+  # pe
+  # effort$total_pe <- report_estimates$total |> 
+  #   filter(
+  #     model_type == "PE",
+  #     estimate_category == "effort",
+  #     estimate_type == "estimate_sum"
+  #   ) |> 
+  #   group_by(fishery_name) |> 
+  #   distinct(estimate_value) |> #PE effort values are catch group agnostic
+  #   summarise(total_hours = mean(estimate_value)) |> 
+  #   mutate(model_type = "PE")
+effort <- list()  
+
+  effort$season_totals <- report_estimates$total |> 
+    filter(analysis_id == "17b60cc6-b331-4576-8bb2-6a76a6351307") |> 
+    # filter() # filter to specific model run encompassing 7/1 - 11/15 monitoring period (adult total encounters)
+    filter(
+      model_type %in% c("BSS","PE"),
+      estimate_category %in% c("effort","E_sum"),
+      estimate_type %in% c("estimate_sum", "mean", "quantile_lower_2_5", "quantile_median_50", "quantile_upper_97_5")) |>
+      group_by(year, model_type, estimate_type) |>
+    summarise(estimate_value = mean(estimate_value, .groups = "drop")) # average over multiple BSS runs
+
+```
+
+```{r seasonal total fishing effort table}
+#| echo: false
+
+  #create table
+  effort$season_totals |> 
+  ungroup() |> 
+  select(-model_type) |> 
+  pivot_wider(names_from = estimate_type, values_from = estimate_value) |> 
+  rename(
+    `Design based estimator` = estimate_sum, `Bayesian state space mean` = mean, `2.5%` = "quantile_lower_2_5",
+    `50%` = "quantile_median_50",
+    `97.5%` = "quantile_upper_97_5"
+  ) |> 
+  select(year, `Design based estimator`, dplyr::everything()) |> 
+  rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |> 
+  gt() |> 
+    fmt_number(columns = c(`2.5%`, `50%`, `97.5%`, "Design based estimator", `Bayesian state space mean`), decimals = 0)
+  
+  
+  # |> 
+    # tab_footnote(glue::glue("Upload session: {upload}"))
+
+  # return(effort_total_table)
+# }
+
+# effort_total_table(creel_estimates, upload = 1)
+# effort_total_table(creel_estimates, upload = 2)
+```
+
+```{r daily effort estimates data prep}
+#| echo: false
+#| include: false
+
+
+# add approximate julian date - month matches 
+month_ticks <- data.frame(
+  julian_date = c(183, 214, 244, 274, 305), # Rough Julian dates for Sep, Oct, Nov, Dec
+  month_label = c("Jul", "Aug", "Sep", "Oct", "Nov")
+)
+
+# wrangle the data for plotting 
+effort_daily <- report_estimates$stratum |> 
+  mutate(angler_type_name = word(angler_type_name)) |> 
+  mutate(angler_type_name = factor(angler_type_name, levels = c("Bank", "Boat"))) |> 
+  # mutate(catch_group = paste(species_name, life_stage_name, fate_name, fin_mark_desc, sep = "_")) |> 
+  filter(estimate_category == "effort") |> 
+  filter(estimate_type %in% c("quantile_lower_2_5", "quantile_median_50", "quantile_upper_97_5")) |> 
+  pivot_wider(names_from = estimate_type, values_from = estimate_value) |> 
+  group_by(year, month, julian_date, angler_type_name) |> 
+  summarise(
+    quantile_lower_2_5 = mean(quantile_lower_2_5),
+    quantile_median_50 = mean(quantile_median_50),
+    quantile_upper_97_5 = mean(quantile_upper_97_5)
+  ) |> 
+  rename(Year = year, Month = month, `Angler type` = angler_type_name, `Julian date` = julian_date,
+    `lower 2.5%` = quantile_lower_2_5,
+    `median 50%` = quantile_median_50,
+    `upper 97.5%` = quantile_upper_97_5)
+
+# check to see if sum of daily means is correct 
+effort_daily_ck <- report_estimates$stratum |> 
+  filter(estimate_category == "effort") |> 
+  filter(estimate_type %in% c("mean", "quantile_median_50")) |> 
+  pivot_wider(names_from = estimate_type, values_from = estimate_value) |> 
+  group_by(year, month, julian_date, angler_type_name) |>
+  summarise(
+    mean_daily = mean(mean),
+    median_daily = mean(quantile_median_50, na.rm = TRUE)
+  ) |> 
+  group_by(year) |> 
+  summarise(
+    total_mean = sum(mean_daily),
+    total_median = sum(median_daily)
+  )
+
+```
+
+```{r daily effort estimates plot}
+#| echo: false
+#| fig.cap: "Figure _. Daily estimates of effort. Lines are posterior medians and shading shows 95% credible intervals. Surveys were conducted from _______. The fishery was closed through emergency regulations from _October 8-28, 2022 due to drought conditions_______."
+
+# plot of daily median and lower/upper 95% effort estimates
+# could further modify this to call in all the daily data and facet by estimate_category 
+
+effort_daily_plot <- effort_daily |> 
+  ggplot(aes(x = `Julian date`, y = `median 50%`, ymin = `lower 2.5%`, ymax = `upper 97.5%`,
+             fill = `Angler type`, color = `Angler type`)) +
+  geom_line(size = 0.8) + # Line for median values
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Boat"), alpha = 0.2, color = NA) + # Plot Boat first 
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Bank"), alpha = 0.2, color = NA) + # Plot Bank second
+
+  scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  labs(
+    x = "Date",
+    y = "Estimated angler effort (angler hours)") +
+  facet_wrap(~ Year, ncol = 1, scales = "free_x") +
+  scale_x_continuous(limits = c(183, 305),
+                     breaks = month_ticks$julian_date,     # Use Julian dates for breaks
+    labels = month_ticks$month_label) +
+  theme_bw() 
+  
+effort_daily_plot
+
+```
+
+### Catch rate estimates
+
+### Catch estimates
+
+#### Seasonal total estimated catch
+
+```{r seasonal catch data prep}
+#| echo: false
+
+### with mean 
+# catch$total_bss <- report_estimates$total |> 
+#   filter(
+#     model_type == "BSS",
+#     estimate_category == "C_sum",
+#     # estimate_type == "mean"
+#     estimate_type %in% c("mean", "quantile_lower_2_5", "quantile_lower_25", "quantile_median_50", "quantile_upper_75", "quantile_upper_97_5")
+#   ) |>
+#   pivot_wider(names_from = estimate_type, values_from = estimate_value) |> 
+#   select(year, species, life_stage, fin_mark, fate,
+#          mean, quantile_lower_2_5, quantile_lower_25,
+#          quantile_median_50, quantile_upper_75, quantile_upper_97_5) |> 
+#    rename(
+#      mark_status = fin_mark,
+#     `2.5%` = "quantile_lower_2_5", `25%` = "quantile_lower_25",
+#     `50%` = "quantile_median_50", `75%` = "quantile_upper_75",
+#     `97.5%` = "quantile_upper_97_5"
+#   ) |> 
+#   arrange(year, species, life_stage, mark_status, fate) |>
+#   group_by(year) |> 
+#   rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence())  
+#   # relocate(quantile_lower_2_5, quantile_upper_97_5, .after = quantile_median_50) |> 
+#   
+# 
+# catch_table <- catch$total_bss |> 
+#   gt(
+#     groupname_col = "year"
+#   )  |> 
+#   # tab_style(
+#     # style = cell_fill(), locations = cells_body(columns = "quantile_median_50")
+#   # ) |> 
+#   fmt_number(columns = c("Mean", `2.5%`, `25%`, `50%`, `75%`, `97.5%`), decimals = 0)
+
+catch <- list()
+
+### without mean
+
+catch$total_pe <- report_estimates$total |> 
+    filter(
+      model_type == "PE",
+      estimate_category == "catch",
+      estimate_type == "estimate_sum"
+    ) |> 
+  select(year, species, life_stage, fin_mark, fate, design_based_estimator = estimate_value)
+
+catch$seasonal_total_catch <- report_estimates$total |> 
+  filter(
+    model_type == "BSS",
+    estimate_category == "C_sum",
+    # estimate_type == "mean"
+    estimate_type %in% c("quantile_lower_2_5", "quantile_median_50", "quantile_upper_97_5", "mean")
+  ) |>
+  pivot_wider(names_from = estimate_type, values_from = estimate_value) |> 
+  select(year, species, life_stage, fin_mark, fate, mean,
+         quantile_lower_2_5,
+         quantile_median_50, quantile_upper_97_5) |> 
+  left_join(catch$total_pe, by = c("year", "species", "life_stage", "fin_mark", "fate")) |> 
+  relocate(design_based_estimator, .after = fate) |> 
+   rename(
+     mark_status = fin_mark, `Bayesian state space model mean` = mean,
+    `2.5%` = "quantile_lower_2_5",
+    `50%` = "quantile_median_50",
+    `97.5%` = "quantile_upper_97_5"
+  ) |>
+  arrange(year, species, life_stage, mark_status, fate) |>
+  group_by(year) |> 
+  rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence())  
+  # relocate(quantile_lower_2_5, quantile_upper_97_5, .after = quantile_median_50) |> 
+  
+```
+
+```{r}
+#| echo: false
+#| tab.cap: " "
+
+catch$seasonal_total_catch |> 
+    filter(Year == 2022) |> 
+  gt(
+    groupname_col = "year"
+  )  |> 
+  # tab_style(
+    # style = cell_fill(), locations = cells_body(columns = "quantile_median_50")
+  # ) |> 
+  fmt_number(columns = c(`2.5%`, `50%`, `97.5%`, "Design based estimator", "Bayesian state space model mean"), decimals = 0)
+
+```
+
+{{< pagebreak >}}
+
+```{r}
+#| echo: false
+#| eval: false
+#| tab.cap: " "
+
+catch$seasonal_total_catch |> 
+    filter(Year == 2023) |> 
+  gt(
+    groupname_col = "year"
+  )  |> 
+  # tab_style(
+    # style = cell_fill(), locations = cells_body(columns = "quantile_median_50")
+  # ) |> 
+  fmt_number(columns = c(`2.5%`, `50%`, `97.5%`, "Design based estimator", "Bayesian state space model mean"), decimals = 0)
+
+```
+
+#### Daily estimated catch
+
+```{r daily catch estimates data prep}
+#| echo: false
+#| include: false
+
+
+# add approximate julian date - month matches 
+month_ticks <- data.frame(
+  julian_date = c(183, 214, 244, 274, 305), # Rough Julian dates for Sep, Oct, Nov, Dec
+  month_label = c("Jul", "Aug", "Sep", "Oct", "Nov")
+)
+
+# wrangle the data for plotting 
+catch_daily <- report_estimates$stratum |> 
+  mutate(angler_type_name = word(angler_type_name)) |> 
+  mutate(angler_type_name = factor(angler_type_name, levels = c("Bank", "Boat"))) |> 
+  # mutate(catch_group = paste(species_name, life_stage_name, fate_name, fin_mark_desc, sep = "_")) |> 
+  filter(estimate_category == "catch") |> 
+  filter(estimate_type %in% c("quantile_lower_2_5", "quantile_median_50", "quantile_upper_97_5")) |> 
+  pivot_wider(names_from = estimate_type, values_from = estimate_value) |> 
+  # group_by(year, month, angler_type_name, julian_date) |> 
+  # summarise(
+  #   quantile_lower_2_5 = mean(quantile_lower_2_5),
+  #   quantile_median_50 = mean(quantile_median_50),
+  #   quantile_upper_97_5 = mean(quantile_upper_97_5)
+  # ) |> 
+  rename(Year = year, Month = month, `Angler type` = angler_type_name, `Catch group` = catch_group,
+         `Julian date` = julian_date,
+    `lower 2.5%` = quantile_lower_2_5,
+    `median 50%` = quantile_median_50,
+    `upper 97.5%` = quantile_upper_97_5)
+
+# check to see if sum of daily means is correct 
+# effort_daily_ck <- report_estimates$stratum |> 
+#   filter(estimate_category == "effort") |> 
+#   filter(estimate_type %in% c("mean", "quantile_median_50")) |> 
+#   pivot_wider(names_from = estimate_type, values_from = estimate_value) |> 
+#   group_by(year, month, julian_date, angler_type_name) |>
+#   summarise(
+#     mean_daily = mean(mean),
+#     median_daily = mean(quantile_median_50, na.rm = TRUE)
+#   ) |> 
+#   group_by(year) |> 
+#   summarise(
+#     total_mean = sum(mean_daily),
+#     total_median = sum(median_daily)
+#   )
+
+```
+
+##### Chinook daily catch plots
+
+```{r daily catch estimates plot Chinook_Adult_Unmarked_Released}
+#| echo: false
+#| fig.cap: "Figure _. Daily catch estimates of released adult Chinook with no adipose fin present (i.e. unmarked). Lines are posterior medians and shading shows 95% credible intervals. Surveys were conducted from __________."
+
+# plot of daily median and lower/upper 95% effort estimates
+# could further modify this to call in all the daily data and facet by estimate_category 
+
+# c("Coho_Adult_UM_Kept", "Coho_Adult_UM_Released",
+#                             "Coho_Adult_AD_Kept", "Coho_Adult_AD_Released")
+
+# Iterate through each Catch_group and create plots
+catch_daily |> 
+  # filter(section_num == 1) |> 
+  filter(`Catch group` == "Chinook_Adult_UM_Released") |> 
+  ggplot(aes(x = `Julian date`, y = `median 50%`, ymin = `lower 2.5%`, ymax = `upper 97.5%`,
+             fill = `Angler type`, color = `Angler type`)) +
+  geom_line(size = 0.8) + # Line for median values
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Boat"), alpha = 0.2, color = NA) + # Plot Boat first 
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Bank"), alpha = 0.2, color = NA) + # Plot Bank second
+  scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  labs(
+    title = "Daily estimated catch of Chinook salmon (adult, unmarked, released)",
+    x = "Date",
+    y = "Estimated catch") +
+  # facet_wrap(~ Year + section_num, ncol = 1, scales = "free_x") +
+  facet_wrap(~ section_num, ncol = 1, scales = "free_x") +
+  scale_y_continuous(limits = c(0,150)) +
+  scale_x_continuous(limits = c(214, 305),
+                     breaks = month_ticks$julian_date,     # Use Julian dates for breaks
+    labels = month_ticks$month_label) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 8) # Adjust the font size for the title
+  )
+
+```
+
+```{r daily catch estimates plot Chinook_Adult_Unmarked_Kept}
+#| echo: false
+#| include: false
+#| fig.cap: "Figure _. Daily catch estimates of released adult Chinook with no adipose fin present (i.e. unmarked). Lines are posterior medians and shading shows 95% credible intervals. Surveys were conducted from __________."
+
+# Iterate through each Catch_group and create plots
+catch_daily |> 
+  filter(section_num == 1, Year == 2022) |>
+  filter(`Catch group` == "Chinook_Adult_UM_Kept") |> 
+  ggplot(aes(x = `Julian date`, y = `median 50%`, ymin = `lower 2.5%`, ymax = `upper 97.5%`,
+             fill = `Angler type`, color = `Angler type`)) +
+  geom_line(size = 0.8) + # Line for median values
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Boat"), alpha = 0.2, color = NA) + # Plot Boat first 
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Bank"), alpha = 0.2, color = NA) + # Plot Bank second
+  scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  labs(
+    title = "Daily estimated catch of Chinook salmon (adult, unmarked, retained)",
+    x = "Date",
+    y = "Estimated catch") +
+    # facet_wrap(~ Year + section_num, ncol = 1, scales = "free_x") +
+  # facet_wrap(~ section_num, ncol = 1, scales = "free_x") +
+  scale_y_continuous(limits = c(0,140)) +
+  scale_x_continuous(limits = c(244, 350),
+                     breaks = month_ticks$julian_date,     # Use Julian dates for breaks
+    labels = month_ticks$month_label) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 8) # Adjust the font size for the title
+  )
+
+```
+
+```{r daily catch estimates plot Chinook_Adult_Adipose fin clipped_Kept}
+#| echo: false
+#| fig.cap: "Figure _. Daily catch estimates of released adult Chinook with no adipose fin present (i.e. unmarked). Lines are posterior medians and shading shows 95% credible intervals. Surveys were conducted from __________."
+
+# Iterate through each Catch_group and create plots
+catch_daily |> 
+  # filter(section_num == 1, Year == 2022) |>
+  filter(`Catch group` == "Chinook_Adult_AD_Kept") |> 
+  # filter(section_num == 1) |> 
+  # filter(!(section_num == 2 & Year == 2023)) |> 
+  ggplot(aes(x = `Julian date`, y = `median 50%`, ymin = `lower 2.5%`, ymax = `upper 97.5%`,
+             fill = `Angler type`, color = `Angler type`)) +
+  geom_line(size = 0.8) + # Line for median values
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Boat"), alpha = 0.2, color = NA) + # Plot Boat first 
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Bank"), alpha = 0.2, color = NA) + # Plot Bank second
+  scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  labs(
+    title = "Daily estimated catch of Chinook salmon (adult, adipose fin clipped, retained)",
+    x = "Date",
+    y = "Estimated catch") +
+  # facet_wrap(~ Year + section_num, ncol = 1, scales = "free_x") +
+  facet_wrap(~ section_num, ncol = 1, scales = "free_x") +
+  # scale_y_continuous(limits = c(0,350)) +
+  scale_x_continuous(limits = c(214, 305),
+                     breaks = month_ticks$julian_date,     # Use Julian dates for breaks
+    labels = month_ticks$month_label) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 8) # Adjust the font size for the title
+  )
+
+```
+
+```{r daily catch estimates plot Chinook_Adult_Adipose fin clipped_Released}
+#| echo: false
+#| fig.cap: "Figure _. Daily estimates of total encounters (both retained and released) adult Chinook with no adipose fin present (i.e. marked). Lines are posterior medians and shading shows 95% credible intervals. Surveys were conducted from __________."
+
+# Iterate through each Catch_group and create plots
+catch_daily |> 
+  # filter(section_num == 1, Year == 2022) |>
+  filter(`Catch group` == "Chinook_Adult_AD_Released|Kept") |> 
+  # filter(section_num == 1) |>
+  # filter(!(section_num == 2 & Year == 2023)) |> 
+  ggplot(aes(x = `Julian date`, y = `median 50%`, ymin = `lower 2.5%`, ymax = `upper 97.5%`,
+             fill = `Angler type`, color = `Angler type`)) +
+  geom_line(size = 0.8) + # Line for median values
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Boat"), alpha = 0.2, color = NA) + # Plot Boat first 
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Bank"), alpha = 0.2, color = NA) + # Plot Bank second
+  scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  labs(
+    title = "Daily estimated catch of Chinook salmon (adult, adipose fin clipped, released)",
+    x = "Date",
+    y = "Estimated catch") +
+  # facet_wrap(~ Year + section_num, ncol = 1, scales = "free_x") +
+  facet_wrap(~ section_num, ncol = 1, scales = "free_x") +
+  # scale_y_continuous(limits = c(0,350)) +
+  scale_x_continuous(limits = c(214, 305),
+                     breaks = month_ticks$julian_date,     # Use Julian dates for breaks
+    labels = month_ticks$month_label) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 8) # Adjust the font size for the title
+  )
+
+```
+
+```{r daily catch estimates plot Chinook adult unknown released}
+#| echo: false
+#| eval: false
+
+#| fig.cap: "Figure _. Daily catch estimates of released adult Chinook with a fin clip status reported as unknown. Lines are posterior medians and shading shows 95% credible intervals. Surveys were conducted from ______."
+
+# Iterate through each Catch_group and create plots
+catch_daily |> 
+  # filter(section_num == 1, Year == 2022) |>
+  filter(`Catch group` == "Chinook_Adult_UNK_Released") |> 
+  # filter(section_num == 1) |>
+  # filter(Year == 2023) |> 
+  # filter(!(section_num == 2 & Year == 2023)) |> 
+  ggplot(aes(x = `Julian date`, y = `median 50%`, ymin = `lower 2.5%`, ymax = `upper 97.5%`,
+             fill = `Angler type`, color = `Angler type`)) +
+  geom_line(size = 0.8) + # Line for median values
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Boat"), alpha = 0.2, color = NA) + # Plot Boat first 
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Bank"), alpha = 0.2, color = NA) + # Plot Bank second
+  scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  labs(
+    title = "Daily estimated catch of Chinook salmon (adult, unknown reported clip status, released)",
+    x = "Date",
+    y = "Estimated catch") +
+  # facet_wrap(~ Year + section_num, ncol = 1, scales = "free_x") +
+    facet_wrap(~ section_num, ncol = 1, scales = "free_x") +
+  # scale_y_continuous(limits = c(0,350)) +
+  scale_x_continuous(limits = c(214, 305),
+                     breaks = month_ticks$julian_date,     # Use Julian dates for breaks
+    labels = month_ticks$month_label) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 8) # Adjust the font size for the title
+  )
+
+```
+
+##### Coho daily catch plots
+
+```{r daily catch estimates plot Coho_Adult_Unmarked_Released}
+#| echo: false
+#| include: false
+#| eval: false
+#| fig.cap: "Figure _. Daily catch estimates of released adult Coho with no adipose fin present (i.e. unmarked). Lines are posterior medians and shading shows 95% credible intervals. Surveys were conducted from September 1, 2022 to November 29, 2023. The fishery was closed through emergency regulations from October 8-28, 2022 due to drought conditions. The upper section of the river from the Highway 101 Bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers was closed from December 1-31, 2022, and the lower section of the river from the mouth to the Highway 101 bridge  was closed from December 17-31, 2022. In December 2023 the fishery was closed by emergency rule."
+
+# plot of daily median and lower/upper 95% effort estimates
+# could further modify this to call in all the daily data and facet by estimate_category 
+
+# c("Coho_Adult_UM_Kept", "Coho_Adult_UM_Released",
+#                             "Coho_Adult_AD_Kept", "Coho_Adult_AD_Released")
+
+# Iterate through each Catch_group and create plots
+catch_daily |> 
+  filter(section_num == 1) |> 
+  filter(`Catch group` == "Coho_Adult_Unmarked_Released") |> 
+  ggplot(aes(x = `Julian date`, y = `median 50%`, ymin = `lower 2.5%`, ymax = `upper 97.5%`,
+             fill = `Angler type`, color = `Angler type`)) +
+  geom_line(size = 0.8) + # Line for median values
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Boat"), alpha = 0.2, color = NA) + # Plot Boat first 
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Bank"), alpha = 0.2, color = NA) + # Plot Bank second
+  scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  labs(
+    title = "Daily estimated catch of Coho salmon (adult, unmarked, released)",
+    x = "Date",
+    y = "Estimated catch") +
+  facet_wrap(~ Year + section_num, ncol = 1, scales = "free_x") +
+  # scale_y_continuous(limits = c(0,900)) +
+  scale_x_continuous(limits = c(244, 350),
+                     breaks = month_ticks$julian_date,     # Use Julian dates for breaks
+    labels = month_ticks$month_label) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 8) # Adjust the font size for the title
+  )
+
+```
+
+```{r daily catch estimates plot coho unmarked kept }
+#| echo: false
+#| include: false
+#| eval: false
+
+#| fig.cap: "Figure _. Daily catch estimates of retained adult Coho with no adipose fin present (i.e. unmarked). Lines are posterior medians and shading shows 95% credible intervals. Surveys were conducted from September 1, 2022 to November 29, 2023. The fishery was closed through emergency regulations from October 8-28, 2022 due to drought conditions. The upper section of the river from the Highway 101 Bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers was closed from December 1-31, 2022, and the lower section of the river from the mouth to the Highway 101 bridge  was closed from December 17-31, 2022. In December 2023 the fishery was closed by emergency rule."
+
+# Iterate through each Catch_group and create plots
+catch_daily |> 
+  filter(section_num == 1, Year == 2022) |>
+  filter(`Catch group` == "Coho_Adult_Unmarked_Kept") |> 
+  ggplot(aes(x = `Julian date`, y = `median 50%`, ymin = `lower 2.5%`, ymax = `upper 97.5%`,
+             fill = `Angler type`, color = `Angler type`)) +
+  geom_line(size = 0.8) + # Line for median values
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Boat"), alpha = 0.2, color = NA) + # Plot Boat first 
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Bank"), alpha = 0.2, color = NA) + # Plot Bank second
+  scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  labs(
+    title = "Daily estimated catch of Coho salmon (adult, unmarked, retained)",
+    x = "Date",
+    y = "Estimated catch") +
+  facet_wrap(~ Year + section_num, ncol = 1, scales = "free_x") +
+  scale_y_continuous(limits = c(0,140)) +
+  scale_x_continuous(limits = c(244, 350),
+                     breaks = month_ticks$julian_date,     # Use Julian dates for breaks
+    labels = month_ticks$month_label) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 8) # Adjust the font size for the title
+  )
+
+```
+
+```{r daily catch estimates plot Coho Adult Adipose fin clipped Kept}
+#| echo: false
+#| include: false
+#| eval: false
+#| fig.cap: "Figure _. Daily catch estimates of retained adult Coho with a clipped adipose fin. Lines are posterior medians and shading shows 95% credible intervals. Surveys were conducted from September 1, 2022 to November 29, 2023. The fishery was closed through emergency regulations from October 8-28, 2022 due to drought conditions. The upper section of the river from the Highway 101 Bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers was closed from December 1-31, 2022, and the lower section of the river from the mouth to the Highway 101 bridge  was closed from December 17-31, 2022. In December 2023 the fishery was closed by emergency rule."
+
+# Iterate through each Catch_group and create plots
+catch_daily |> 
+  # filter(section_num == 1, Year == 2022) |>
+  filter(`Catch group` == "Coho_Adult_Adipose fin clipped_Kept") |> 
+  filter(section_num == 1) |> 
+  # filter(!(section_num == 2 & Year == 2023)) |> 
+  ggplot(aes(x = `Julian date`, y = `median 50%`, ymin = `lower 2.5%`, ymax = `upper 97.5%`,
+             fill = `Angler type`, color = `Angler type`)) +
+  geom_line(size = 0.8) + # Line for median values
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Boat"), alpha = 0.2, color = NA) + # Plot Boat first 
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Bank"), alpha = 0.2, color = NA) + # Plot Bank second
+  scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  labs(
+    title = "Daily estimated catch of Coho salmon (adult, adipose fin clipped, retained)",
+    x = "Date",
+    y = "Estimated catch") +
+  facet_wrap(~ Year + section_num, ncol = 1, scales = "free_x") +
+  # scale_y_continuous(limits = c(0,350)) +
+  scale_x_continuous(limits = c(244, 350),
+                     breaks = month_ticks$julian_date,     # Use Julian dates for breaks
+    labels = month_ticks$month_label) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 8) # Adjust the font size for the title
+  )
+
+```
+
+```{r daily catch estimates plot Coho Adult Adipose fin clipped Released}
+#| echo: false
+#| include: false
+#| eval: false
+#| fig.cap: "Figure _. Daily catch estimates of released adult Coho with a clipped adipose fin. Lines are posterior medians and shading shows 95% credible intervals. Surveys were conducted from September 1, 2022 to November 29, 2023. The fishery was closed through emergency regulations from October 8-28, 2022 due to drought conditions. The upper section of the river from the Highway 101 Bridge upstream to the confluence of the East Fork and West Fork Humptulips Rivers was closed from December 1-31, 2022, and the lower section of the river from the mouth to the Highway 101 bridge  was closed from December 17-31, 2022. In December 2023 the fishery was closed by emergency rule."
+
+# Iterate through each Catch_group and create plots
+catch_daily |> 
+  # filter(section_num == 1, Year == 2022) |>
+  filter(`Catch group` == "Coho_Adult_Adipose fin clipped_Released") |> 
+  filter(section_num == 1) |>
+  # filter(!(section_num == 2 & Year == 2023)) |> 
+  ggplot(aes(x = `Julian date`, y = `median 50%`, ymin = `lower 2.5%`, ymax = `upper 97.5%`,
+             fill = `Angler type`, color = `Angler type`)) +
+  geom_line(size = 0.8) + # Line for median values
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Boat"), alpha = 0.2, color = NA) + # Plot Boat first 
+  geom_ribbon(data = ~ filter(.x, `Angler type` == "Bank"), alpha = 0.2, color = NA) + # Plot Bank second
+  scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), labels = c("Bank", "Boat")) +
+  labs(
+    title = "Daily estimated catch of Coho salmon (adult, adipose fin clipped, released)",
+    x = "Date",
+    y = "Estimated catch") +
+  facet_wrap(~ Year + section_num, ncol = 1, scales = "free_x") +
+  # scale_y_continuous(limits = c(0,350)) +
+  scale_x_continuous(limits = c(244, 350),
+                     breaks = month_ticks$julian_date,     # Use Julian dates for breaks
+    labels = month_ticks$month_label) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 8) # Adjust the font size for the title
+  )
+
+```

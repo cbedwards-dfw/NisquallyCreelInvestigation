@@ -259,7 +259,9 @@ report_tabs$survey_dates_monthly_p <- report_tabs$combined_dates |>
 
 ### Survey days and closures
 
-During the monitoring period, a roving creel survey was conducted on the `r params$focal_waterbody` on `r report_tabs$survey_dates_summary[2]` out of the `r report_tabs$survey_dates_summary[6]` (`r round((report_tabs$survey_dates_summary[8]*100), 0)`%) days that the fishery was open. At the monthly time step the mean sampled proportion of open fishing days was `r report_tabs$survey_dates_monthly_summary$mean` 
+During the monitoring period, a roving creel survey was conducted on the `r params$focal_waterbody` on `r report_tabs$survey_dates_summary[2]` out of the `r report_tabs$survey_dates_summary[6]` (`r round((report_tabs$survey_dates_summary[8]*100), 0)`%) days that the fishery was open. At the monthly time step the mean sampled proportion of open fishing days was `r report_tabs$survey_dates_monthly_summary$mean`
+
+<!-- (SD = `r report_tabs$survey_dates_monthly_summary$sd)` and ranged from a high of `r report_tabs$survey_dates_monthly_summary$max)` in August 2023 to a low of `r report_tabs$survey_dates_monthly_summary$min)` in July 2023. -->
 
 FISHERY SPECIFIC CLOSURE DATES
 

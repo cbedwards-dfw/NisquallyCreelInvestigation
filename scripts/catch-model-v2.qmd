@@ -8,6 +8,8 @@ editor: visual
 
 Here we develop a model to predict fish encounters in the creel interviews, and identify when and how observations fail to match the expectations of our fitted model.
 
+In v2, I am revisiting this work starting June 2025.
+
 ## Setup
 
 ### libraries
@@ -53,7 +55,8 @@ dat = raw |>
 dat.sum = dat |> 
   filter(fin_mark %in% c("UM", "AD")) |> 
   group_by(interview_id, 
-           life_stage, event_date, year, month, management_week, fishing_duration_minutes) |> 
+           life_stage, event_date, year, month, management_week, fishing_duration_minutes,
+           angler_count, angler_minutes) |> 
   summarize(um = sum(fish_count[fin_mark == "UM"]),
             ad = sum(fish_count[fin_mark == "AD"]),
             released = sum(fish_count[fate == "Released"]),
@@ -72,7 +75,7 @@ dat.sum = dat.sum |>
 dat.fit = dat |> 
   filter(life_stage == "Adult") |> 
   filter(fin_mark %in% c("UM", "AD")) |> 
-  group_by(interview_id, fin_mark, event_date, year, month, fishing_duration_minutes) |>   
+  group_by(interview_id, fin_mark, event_date, year, month, fishing_duration_minutes, angler_count, angler_minutes) |>   
   summarize(fish_count = sum(fish_count)) |> 
   ungroup() |> 
   ## need to collapse the data down a bit
@@ -103,6 +106,74 @@ dat.fit = dat |>
 Note that we're skipping the \~500 (out of \~65,000) observations with no fishing time. These are entirely from incomplete trips in 2021, which can't be compared apples-to-apples with completed trips anyways.
 
 ::::: panel-tabset
+
+## Looking at the data
+
+The number of fish caught should vary based on time of year and time spent fishing, but we can still start with some basic summaries of the number of reported unmarked fish.
+
+```{r}
+dat.sum |> 
+  count(um) |> 
+  rename(unmarked_encounters = um,
+         interviews = n) |> 
+  gt()
+```
+
+That number bounces around a lot, but in particular we see a lot more 10s that we might expect.
+But maybe those 10s are from a particular time of year, or they were trips that spent a lot of time on the water (or had a lot of anglers). I'll color these trips differently to help them stand out.
+
+```{r}
+ggplot(dat.sum, aes(x = angler_minutes, y = um, col = um==10))+
+  geom_jitter(width = 0, height = 0.3)+theme_bw()+
+  labs(x = "angler minutes (duration x # of anglers)", y = "Unmarked encounters",
+       title = "Unmarked encounters by fishing time")
+```
+
+Even though there extreme values of angler-minutes are other unmarked enocunter categories, it looks like the interviews reporting 10s probably had more average time fishing than in other categories. Here's the summary:
+
+```{r}
+dat.sum |> 
+  group_by(um) |> 
+  summarize(n = n(),
+            mean_angler_minutes = mean(angler_minutes, na.rm = T)) |> 
+  rename(unmarked_encounters = um,
+         interviews = n) |> 
+  gt()
+```
+
+So maybe we did expect more fish caught in those interviews, on average. But not necessarily exactly 10.
+
+What about angler count? Was it always a large group for the 10-UM encounter interviews?
+
+```{r}
+dat.sum |> 
+  count(um, angler_count) |> 
+  rename(unmarked_encounters = um,
+         interviews = n) |> 
+  gt()
+```
+
+Nope, half of them were 1 angler, at most we had 3 anglers.
+
+Maybe it was a time of year thing?
+
+```{r}
+dat.sum |> 
+  mutate(doy = yday(event_date)) |> 
+  ggplot(aes(x = doy, y = um, col = um==10))+
+  geom_jitter(width = 0, height = 0.3)+theme_bw()+
+  labs(y = "Unmarked encounters",
+       title = "Unmarked encounters by season")+
+  scale_x_continuous(labels = doy_2md)
+```
+
+They certainly ARE the time of year when unmarked encounters were highest.
+
+### Takeaway
+
+The number of anglers who reported exactly 10 unmarked encounters seems a little suspicious, but those are generally interviews that should have higher counts based on time of year and angler-minutes. This means we need to do some modeling to build a more nuanced expectation for the catches of these interviews. On the flip side, just because those reported-10 interviews look suspicious in our simple summaries doesn't mean there aren't less obvious problems hiding in the other data. We need to take a thorough look at this. 
+
+
 ## Simple gam model
 
 We fit a generalized additive model with fixed effect of fin_mark and fishing duration, random effect of year, and smooth across day of year that differs by fin_mark. We assume a negative binomial distribution (more on that later).
@@ -163,7 +234,7 @@ testZeroInflation(simulationOutput)
 
 In general these seem okay. Not perfect, and maybe our dispersion is not great.
 
-Fun little bit of foreshadowing: we can look for the excess or deficit of particular values using Dharma. Here's what happens when we use the summary statistic of "Number of 10s in tehd ata").
+Fun little bit of foreshadowing: we can look for the excess or deficit of particular values using Dharma. Here's what happens when we use the summary statistic of "Number of 10s in the data").
 
 ```{r}
 count_tens = function(x) sum(x == 10)
@@ -585,7 +656,7 @@ df.models = bind_rows(df.models,
                                  aic = AIC(out.tmba),
                                  family = family(out.tmba)[[1]],
                                  explanation = "null model. Our 'simple gam model' above, but fit using glmmTMB")
-                      )
+)
 
 out.tmbb = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs', k = 20) + fishing_duration_minutes + (1 | yearfac),
                    family = nbinom1,

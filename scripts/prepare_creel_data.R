@@ -17,13 +17,14 @@ fishery.ls = get_fishery_data(fishery = "Nisqually salmon", years = 2021:2023)
 
 
 interviews <- fishery.ls$interview |>  
-  mutate(fishing_duration_minutes = (fishing_end_time - fishing_start_time)/60)
+  mutate(fishing_duration_minutes = (fishing_end_time - fishing_start_time)/60,
+         angler_minutes = fishing_duration_minutes * angler_count)
 
 # bind date and waterbody data to the creel interview-based catch records
 catch <- fishery.ls$catch |> 
   left_join(interviews |> 
               select(interview_id, event_date, water_body, year, month, week, fishing_duration_minutes,
-                     angler_count),
+                     angler_count, angler_minutes),
             by = "interview_id") |> 
   filter(species == "Chinook")
 
@@ -33,7 +34,8 @@ write_csv(catch,
 ## we have separate entries by fork length for measured catches. We don't want that for this.
 catch = catch |> 
   group_by(interview_id, species, life_stage, fin_mark, fate,
-           event_date, water_body, fishing_duration_minutes, year, month, week) |> 
+           event_date, water_body, fishing_duration_minutes, angler_count, year, month, week,
+           angler_minutes) |> 
   summarize(fish_count = sum(fish_count)) |> 
   ungroup() |> 
   filter(fin_mark != "UNK")
@@ -41,7 +43,8 @@ catch = catch |>
 ## Create dataframe for chinook-only with all relevant 0s. 
 
 df.dummy = expand_grid(interviews |> 
-                         select(interview_id, event_date, water_body, fishing_duration_minutes) |> 
+                         select(interview_id, event_date, water_body, fishing_duration_minutes, angler_count,
+                                angler_minutes) |> 
                          filter(!is.na(interview_id)),
                        species = "Chinook",
                        life_stage = c("Adult", "Jack"),

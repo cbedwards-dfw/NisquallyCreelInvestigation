@@ -1,3 +1,5 @@
+## UPDATE: this work was translated to .qmd file for easier explanation.
+
 ## looking for autocorrelation in catch using test fishing data
 ## 
 ## Basic concern: if marked fish tend to hang together and unmarked fish tend to hang together and our model

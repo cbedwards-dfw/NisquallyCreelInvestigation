@@ -17,13 +17,13 @@ fishery.ls = get_fishery_data(fishery = "Nisqually salmon", years = 2021:2023)
 
 
 interviews <- fishery.ls$interview |>  
-  mutate(fishing_duration_minutes = (fishing_end_time - fishing_start_time)/60,
+  mutate(fishing_duration_minutes = (as.numeric(fishing_end_time) - as.numeric(fishing_start_time))/60,
          angler_minutes = fishing_duration_minutes * angler_count)
 
 # bind date and waterbody data to the creel interview-based catch records
 catch <- fishery.ls$catch |> 
   left_join(interviews |> 
-              select(interview_id, event_date, water_body, year, month, week, fishing_duration_minutes,
+              select(interview_id, event_date, water_body, year, month, week, fishing_duration_minutes, angler_type, trip_guided, boat_type_boat_used,
                      angler_count, angler_minutes),
             by = "interview_id") |> 
   filter(species == "Chinook")

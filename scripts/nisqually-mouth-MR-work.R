@@ -3,19 +3,28 @@
 ## 
 ## This could give us a general reference point. Probably there is not enough data, but we can see
 ## 
-## Ty suggested talking to Samantha Bundt about locations -- there may be more than what I listed here.
+## I used CWT lat lons and wrote a shiny app to look at cwt locations on a map
+## The following locations are very close to nisqually
+## location_code	location_name	longitude	latitude
+# 132011	ANDERSON ISLAND	-122.7068	47.12675
+# 132276	LUHR BEACH DOCK	-122.7267	47.10038
+# 132279	LYLE POINT	-122.7267	47.10040
+# 132324	NISQUALLY OFF MOUTH	-122.7011	47.11345
+# 132323	NISQUALLY REACH	-122.7009	47.10844
+# 132348	ORO BAY	-122.6918	47.13780
+## 
 
 library(pssp)
 library(tidyverse)
-location_codes = c(132324,
-                   132323,
+## The following still must be copied in to the query language!
+location_codes = c(132011,
+                   132276,
                    132279,
-                   1576
+                   132324,
+                   132323,
+                   132348
 )
 
-vec_maker = function(vec){
-  paste()
-}
 
 catch_near_nisqually <- pssp_query("
 SELECT
@@ -49,7 +58,7 @@ JOIN catch_result_type_lut on fe.catch_result_type_id = catch_result_type_lut.ca
 JOIN catch_area_lut on se.catch_area_id = catch_area_lut.catch_area_id
 JOIN individual_fish indf on fe.fish_encounter_id = indf.fish_encounter_id
 JOIN location l on fe.fish_location_id = l.location_id
-WHERE l.location_code IN('132324', '132323', '132279', '1576')
+WHERE l.location_code IN('132011', '132276', '132279', '132324', '132323', '132348')
     )
 ")
 
@@ -66,5 +75,7 @@ JOIN catch_result_type_lut on fe.catch_result_type_id = catch_result_type_lut.ca
 JOIN catch_area_lut on se.catch_area_id = catch_area_lut.catch_area_id
 JOIN individual_fish indf on fe.fish_encounter_id = indf.fish_encounter_id
 JOIN location l on fe.fish_location_id = l.location_id
-WHERE l.location_code IN('132324', '132323', '132279', '1576')
+WHERE l.location_code IN('132011', '132276', '132279', '132324', '132323', '132348')
 ")
+
+dim(catch_near_nisqually)

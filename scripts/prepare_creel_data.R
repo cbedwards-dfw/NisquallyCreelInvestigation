@@ -23,8 +23,8 @@ interviews <- fishery.ls$interview |>
 # bind date and waterbody data to the creel interview-based catch records
 catch <- fishery.ls$catch |> 
   left_join(interviews |> 
-              select(interview_id, event_date, water_body, year, month, week, fishing_duration_minutes, angler_type, trip_guided, boat_type_boat_used,
-                     angler_count, angler_minutes),
+              select(interview_id, event_date, water_body, year, month, week, fishing_duration_minutes, angler_type, trip_guided, boat_type, boat_used,
+                     angler_count, angler_minutes, trip_status, fishing_start_time, fishing_end_time),
             by = "interview_id") |> 
   filter(species == "Chinook")
 
@@ -34,8 +34,7 @@ write_csv(catch,
 ## we have separate entries by fork length for measured catches. We don't want that for this.
 catch = catch |> 
   group_by(interview_id, species, life_stage, fin_mark, fate,
-           event_date, water_body, fishing_duration_minutes, angler_count, year, month, week,
-           angler_minutes) |> 
+           event_date, water_body, fishing_duration_minutes, angler_count, year, month, week, angler_type, trip_guided, boat_type, boat_used, trip_status, fishing_start_time, fishing_end_time, angler_minutes) |> 
   summarize(fish_count = sum(fish_count)) |> 
   ungroup() |> 
   filter(fin_mark != "UNK")
@@ -44,15 +43,13 @@ catch = catch |>
 
 df.dummy = expand_grid(interviews |> 
                          select(interview_id, event_date, water_body, fishing_duration_minutes, angler_count,
-                                angler_minutes) |> 
+                                angler_minutes,year, month, week, angler_type, trip_guided, boat_type, boat_used, trip_status,
+                                fishing_start_time, fishing_end_time, angler_minutes) |> 
                          filter(!is.na(interview_id)),
                        species = "Chinook",
                        life_stage = c("Adult", "Jack"),
                        fin_mark = c("AD", "UM"),
-                       fate = c("Kept", "Released")) |> 
-  mutate(year = lubridate::year(event_date),
-         month = lubridate::month(event_date),
-         management_week = framrsquared::management_week(event_date))
+                       fate = c("Kept", "Released")) 
 
 catch.zerod = catch |> 
   filter(!is.na(interview_id)) |> 

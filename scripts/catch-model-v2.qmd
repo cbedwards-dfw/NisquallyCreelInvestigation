@@ -4,6 +4,13 @@ author: "Collin Edwards"
 editor: visual
 ---
 
+## Todo
+
+- run with angler minutes
+- problems with 2021 data, run without that
+- incorporate information on angler type
+- Model jacks!!
+
 ## Purpose
 
 Here we develop a model to predict fish encounters in the creel interviews, and identify when and how observations fail to match the expectations of our fitted model.
@@ -21,6 +28,7 @@ library(lme4)
 library(mgcv)
 library(patchwork)
 library(gt)
+library(gtExtras)
 library(gratia)
 library(DHARMa)
 ```
@@ -54,33 +62,40 @@ dat = raw |>
 
 dat.sum = dat |> 
   filter(fin_mark %in% c("UM", "AD")) |> 
-  group_by(interview_id, 
-           life_stage, event_date, year, month, management_week, fishing_duration_minutes,
-           angler_count, angler_minutes) |> 
-  summarize(um = sum(fish_count[fin_mark == "UM"]),
-            ad = sum(fish_count[fin_mark == "AD"]),
-            released = sum(fish_count[fate == "Released"]),
-            kept = sum(fish_count[fate == "Kept"]),
+  group_by(interview_id, event_date, year, month, fishing_duration_minutes,
+           angler_count, angler_minutes, trip_status, angler_type, trip_guided, boat_type, boat_used, fishing_start_time, fishing_end_time) |> 
+  summarize(um_adult = sum(fish_count[fin_mark == "UM" & life_stage == "Adult"]),
+            ad_adult = sum(fish_count[fin_mark == "AD" & life_stage == "Adult"]),
+            released_adult = sum(fish_count[fate == "Released" & life_stage == "Adult"]),
+            kept_adult = sum(fish_count[fate == "Kept" & life_stage == "Adult"]),
+            um_jack = sum(fish_count[fin_mark == "UM" & life_stage == "Jack"]),
+            ad_jack = sum(fish_count[fin_mark == "AD" & life_stage == "Jack"]),
+            released_jack = sum(fish_count[fate == "Released" & life_stage == "Jack"]),
+            kept_jack = sum(fish_count[fate == "Kept" & life_stage == "Jack"])
   ) |> 
   ungroup() |> 
-  mutate(had.ad = ad>0,
-         had.um = um>0,
-         had.release = released>0,
-         had.kept = kept >0)
+  mutate(um_total = um_jack + um_adult,
+         ad_total = ad_jack + ad_adult,
+         released_total = released_adult + released_jack,
+         kept_total = kept_adult + kept_jack,
+         had.ad = ad_total > 0,
+         had.um = um_total > 0,
+         had.release = released_total > 0,
+         had.kept = kept_total > 0)
 
 ## for now, ignore jacks
-dat.sum = dat.sum |> 
-  filter(life_stage == "Adult")
 
 dat.fit = dat |> 
-  filter(life_stage == "Adult") |> 
+  # filter(life_stage == "Adult") |> 
   filter(fin_mark %in% c("UM", "AD")) |> 
-  group_by(interview_id, fin_mark, event_date, year, month, fishing_duration_minutes, angler_count, angler_minutes) |>   
+  group_by(interview_id, life_stage, fin_mark, event_date, year, month, fishing_duration_minutes, 
+           angler_count, angler_minutes, trip_status, angler_type, trip_guided, boat_type, boat_used,
+           fishing_start_time, fishing_end_time) |>   
   summarize(fish_count = sum(fish_count)) |> 
   ungroup() |> 
   ## need to collapse the data down a bit
   left_join(dat.sum |> 
-              select(interview_id, had.ad, had.um, had.release, had.kept),
+              select(interview_id, had.ad, had.um, had.release, had.kept, um_total, ad_total),
             by = "interview_id") |> 
   mutate(doy = yday(event_date),
          fin_mark = as.factor(fin_mark),
@@ -105,6 +120,19 @@ dat.fit = dat |>
 
 Note that we're skipping the \~500 (out of \~65,000) observations with no fishing time. These are entirely from incomplete trips in 2021, which can't be compared apples-to-apples with completed trips anyways.
 
+#### Removing 2021
+
+The 2021 data we have available doesn't match the underlying datasheets. Until BDS fixes this, we will use only 2022 and 2023 data.
+
+```{r}
+dat.sum = dat.sum |> 
+  filter(year != 2021)
+
+dat.fit = dat.fit |> 
+  filter(year != 2021)
+```
+
+
 ::::: panel-tabset
 
 ## Looking at the data
@@ -113,54 +141,39 @@ The number of fish caught should vary based on time of year and time spent fishi
 
 ```{r}
 dat.sum |> 
-  count(um) |> 
-  rename(unmarked_encounters = um,
+  count(um_total) |> 
+  rename(unmarked_encounters = um_total,
          interviews = n) |> 
   gt()
 ```
 
-That number bounces around a lot, but in particular we see a lot more 10s that we might expect.
-But maybe those 10s are from a particular time of year, or they were trips that spent a lot of time on the water (or had a lot of anglers). I'll color these trips differently to help them stand out.
+We can look at the breakdown of angler minutes per trip to see if the highest UM encounter trips
 
 ```{r}
-ggplot(dat.sum, aes(x = angler_minutes, y = um, col = um==10))+
+ggplot(dat.sum, aes(x = angler_minutes, y = um_total, col = um_total==10))+
   geom_jitter(width = 0, height = 0.3)+theme_bw()+
   labs(x = "angler minutes (duration x # of anglers)", y = "Unmarked encounters",
        title = "Unmarked encounters by fishing time")
 ```
 
-Even though there extreme values of angler-minutes are other unmarked enocunter categories, it looks like the interviews reporting 10s probably had more average time fishing than in other categories. Here's the summary:
+It can be hard to see what the average minutes per catch look like, so here they are in table form
 
 ```{r}
 dat.sum |> 
-  group_by(um) |> 
+  group_by(um_total) |> 
   summarize(n = n(),
             mean_angler_minutes = mean(angler_minutes, na.rm = T)) |> 
-  rename(unmarked_encounters = um,
+  rename(unmarked_encounters = um_total,
          interviews = n) |> 
   gt()
 ```
 
-So maybe we did expect more fish caught in those interviews, on average. But not necessarily exactly 10.
-
-What about angler count? Was it always a large group for the 10-UM encounter interviews?
-
-```{r}
-dat.sum |> 
-  count(um, angler_count) |> 
-  rename(unmarked_encounters = um,
-         interviews = n) |> 
-  gt()
-```
-
-Nope, half of them were 1 angler, at most we had 3 anglers.
-
-Maybe it was a time of year thing?
+It's also relevant to look at what time of year this occured in.
 
 ```{r}
 dat.sum |> 
   mutate(doy = yday(event_date)) |> 
-  ggplot(aes(x = doy, y = um, col = um==10))+
+  ggplot(aes(x = doy, y = um_total, col = um_total==10))+
   geom_jitter(width = 0, height = 0.3)+theme_bw()+
   labs(y = "Unmarked encounters",
        title = "Unmarked encounters by season")+
@@ -169,23 +182,205 @@ dat.sum |>
 
 They certainly ARE the time of year when unmarked encounters were highest.
 
-### Takeaway
+### Minutes per catch
 
-The number of anglers who reported exactly 10 unmarked encounters seems a little suspicious, but those are generally interviews that should have higher counts based on time of year and angler-minutes. This means we need to do some modeling to build a more nuanced expectation for the catches of these interviews. On the flip side, just because those reported-10 interviews look suspicious in our simple summaries doesn't mean there aren't less obvious problems hiding in the other data. We need to take a thorough look at this. 
+We can look at how realistic some of this data is by calculating the average angler minutes per catch, and see if some of the observations are not realistic.
+Trips with no catch will be treated as NAs for this calculation.
+
+```{r}
+dat.sum = dat.sum |> 
+  mutate(catch_per_hour = (um_total + ad_total)/angler_minutes * 2,
+         minutes_per_catch = angler_minutes / (um_total + ad_total),
+         minutes_per_catch = if_else(is.infinite(minutes_per_catch),
+                                     NA,
+                                     minutes_per_catch))
+
+hist(dat.sum$minutes_per_catch, breaks = 500)
+
+hist(dat.sum$minutes_per_catch, breaks = 100, xlim = c(0, 500))
+```
+
+Let's look at the top 20 fastest catching surveys:
+
+```{r}
+dat.sum |> 
+  arrange((minutes_per_catch)) |> 
+  select(minutes_per_catch, um_total, ad_total, fishing_duration_minutes , angler_count, boat_used, event_date, fishing_start_time, fishing_end_time) |> 
+  head(20) |> 
+  gt() |> 
+  gt_highlight_rows(rows = um_total == 5)
+
+```
+
+We have an impossible data point with identical start and end time. Other than that, we are looking at generally seems feasible. Further, the data is not dominated by surveys that are primarily high UM encounters. That said, our two highest UM reported (5 UM encounters) are in the top 20 most efficient catch trips, with averages of 30 and 40 angler-minutes per fish for those trips. Trips with high UM catch must necessarily have high catch rates (or huge surpluses of angler-minutes), but this might border on the unreasonable?
+
+
+
+```{r}
+dat.plot = dat.sum |> 
+  mutate(doy = yday(event_date))
+
+dat.plot |> 
+  ggplot(aes(x = doy, y = catch_per_hour))+
+  geom_jitter(width = 0.2, height = 0)+
+  geom_text(data = dat.plot |> filter((catch_per_hour) > 1.3),
+            aes(y = catch_per_hour, x = doy, label = um_total),
+            col = 'blue', nudge_x = 1, nudge_y = -.08)+
+  facet_wrap(.~ year, ncol = 1)+ 
+  scale_x_continuous(labels = doy_2md)+
+  labs(x = "", y = "Chinook caught per hour")+
+  labs(title = "Chinook catch per hour",
+       subtitle = "black numbers = total unmarked catch")+
+  theme_bw()
+
+
+dat.plot |> 
+  ggplot(aes(x = doy, y = catch_per_hour, col = as.factor(year)))+
+  geom_jitter(width = 0.2, height = 0)+
+  labs(x = "", y = "Chinook caught per hour")+
+  scale_x_continuous(labels = doy_2md)+
+  labs(title = "Chinook catch per hour",
+       subtitle = "date jittered +/- 5 hours very slightly for readability")+
+  theme_bw()
+
+dat.plot |> 
+  ggplot(aes(x = doy, y = catch_per_hour, col = as.factor(year)))+
+  geom_smooth()+
+  labs(x = "", y = "Chinook caught per hour")+
+  scale_x_continuous(labels = doy_2md)+
+  labs(title = "Chinook catch per hour",
+       subtitle = "date jittered +/- 5 hours very slightly for readability")+
+  theme_bw()
+
+
+```
+
+Request for "density" plot of above, shaded by year. Density plot is analogous to histogram, so going to try simple smooth approach
+
+
+```{r}
+temp = dat.sum |> select(boat_used, minutes_per_catch) |> 
+  mutate(minutes_per_catch = coalesce(minutes_per_catch, Inf))
+
+quantile(temp$minutes_per_catch[temp$boat_used=="No"], c(0.001, 0.01, 0.025, 0.05, 0.1, 0.2))
+quantile(temp$minutes_per_catch[temp$boat_used=="Yes"], c(0.001, 0.01, 0.025, 0.05, 0.1, 0.2))
+temp |> 
+  group_by(boat_used) |> 
+  summarize(prop_at_least_hourly = mean(minutes_per_catch <= 60))
+temp |> 
+  group_by(boat_used) |> 
+  summarize(prop_at_least_once_per_90 = mean(minutes_per_catch <= 90))
+
+```
+
+### hypothetical filtering by efficiency
+
+```{r}
+efficiency = seq(1:120)
+res.ls = list()
+for(i in 1:length(efficiency)){
+  cur.counts = dat.sum |> 
+    filter(minutes_per_catch > efficiency[i]) |> 
+    count(boat_used)
+  cur.loss = dat.sum |> 
+    filter(minutes_per_catch <= efficiency[i]) |> 
+    count(boat_used)
+  res.ls[[i]] = tibble(threshold_efficiency_minutes = efficiency[i],
+                       boat_surveys_remaining = cur.counts |> filter(boat_used == "Yes") |> pull(n),
+                       bank_surveys_remaining = cur.counts |> filter(boat_used == "No") |> pull(n),
+                       boat_surveys_lost = cur.loss |> filter(boat_used == "Yes") |> pull(n),
+                       bank_surveys_lost = cur.loss |> filter(boat_used == "No") |> pull(n),
+                       )
+}
+res.df = do.call(bind_rows, res.ls)
+
+
+ggplot(res.df, aes(x = threshold_efficiency_minutes, y = boat_surveys_remaining))+
+  geom_path()+
+  ylim(c(0, NA))+
+  ggtitle("Boat surveys with thresholding")
+
+ggplot(res.df, aes(x = threshold_efficiency_minutes, y = bank_surveys_remaining))+
+  geom_path()+
+  ylim(c(0, NA))+
+  ggtitle("Bank surveys with thresholding")
+
+ggplot(res.df, aes(x = threshold_efficiency_minutes, y = bank_surveys_lost + boat_surveys_lost))+
+  geom_path()+
+  ggtitle("Total surveys lost with thresholding")
+
+
+ggplot(res.df, aes(x = threshold_efficiency_minutes, y = (bank_surveys_lost + boat_surveys_lost)/nrow(dat.sum)))+
+  geom_path()+
+  ggtitle("Surveys lost with threshold-based filtering")+
+  scale_y_continuous(labels = scales::percent)+
+  labs(y = "% of surveys removed",
+       x = "Threshold minutes per catch")+
+  theme_bw(base_size = 14)
+
+
+
+```
+
+
+
+### Catch by duration
+
+
+```{r}
+dat.sum |> 
+  mutate(total_encounters = um_total+ad_total) |> 
+  ggplot(aes(x = angler_minutes, y = total_encounters, col = boat_used))+
+  geom_point()+
+  geom_smooth()+
+  facet_wrap(.~ boat_used)+
+  labs(title = "Encounters by time angling")
+
+```
+
+### Catch by start time
+
+```{r}
+dat.sum |>
+  mutate(total_encounters = um_total+ad_total) |> 
+  ggplot(aes(x = fishing_start_time, y = catch_per_hour, col = boat_used))+
+  geom_point()+
+  geom_smooth()+
+  facet_wrap(.~ boat_used)+
+  labs(y = "catch per hour",
+       title = "catch rate as a function of start time")+
+  theme_bw()
+```
+
+### AD catch by boat_used
+
+```{r}
+dat.fit |> filter(life_stage == "Adult", fin_mark == "AD") |> 
+  count(ad_total, boat_used) |> pivot_wider(names_from = boat_used, values_from = n) |> 
+  gt() |> 
+  tab_caption("# of surveys by marked encounters, split by boat_used")
+  
+```
+
+
 
 
 ## Simple gam model
 
 We fit a generalized additive model with fixed effect of fin_mark and fishing duration, random effect of year, and smooth across day of year that differs by fin_mark. We assume a negative binomial distribution (more on that later).
 
+
 ::: panel-tabset
 ```{r}
 ## GAM model -------------------------------------------
 
-out = gam(fish_count ~ fin_mark + 
-            s(doy, by = fin_mark, k = 20) + 
+dat.fit = dat.fit |> 
+  mutate(mark_stage = as.factor(paste0(fin_mark, " X ", life_stage)))
+
+out = gam(fish_count ~ mark_stage +
+            s(doy, by = mark_stage, k = 20) + 
             s(yearfac, bs = 're') + 
-            fishing_duration_minutes,
+            angler_minutes,
           method = "REML",
           family = "nb",
           data = dat.fit)
@@ -194,25 +389,242 @@ out = gam(fish_count ~ fin_mark +
 
 gp.seasonality = conditional_values(
   out,
-  condition = c("doy", "fin_mark")
+  condition = c("doy", "mark_stage", "yearfac")
 ) |> 
   draw()+
   scale_x_continuous(limits = c(200, 300),
                      labels = doy_2md)+
   scale_y_continuous(limits = c(0, .5))+
+  facet_wrap(.~ yearfac)+
   labs(x = "",
        y = "Predicted encounters per hour",
-       title = "Seasonality of encounters")+
+       title = "Seasonality of encounters, same shape per year")+
   theme_bw(base_size = 14)
 
 gp.seasonality
 
-# ggsave(filename = here("figures/catch-model-results/negbin-season-averages.pdf"),
-#       plot = gp.seasonality,
-#       width = 8, height = 5)
 ```
 
+```{r}
+## GAM model -------------------------------------------
+
+dat.fit = dat.fit |> 
+  mutate(mark_stage = as.factor(paste0(fin_mark, " X ", life_stage)))
+
+out.yearly = gam(fish_count ~ 
+                   te(doy, mark_stage, yearfac, bs = c('tp', 'fs', 'fs')) + 
+                   # s(yearfac, bs = 're') + 
+                   angler_minutes,
+                 method = "REML",
+                 family = "nb",
+                 data = dat.fit)
+
+# draw(out)
+
+gp.seasonality = conditional_values(
+  out.yearly,
+  condition = c("doy", "mark_stage", "yearfac")
+) |> 
+  draw()+
+  scale_x_continuous(limits = c(200, 300),
+                     labels = doy_2md)+
+  scale_y_continuous(limits = c(0, .5))+
+  facet_wrap(.~ yearfac)+
+  labs(x = "",
+       y = "Predicted encounters per hour",
+       title = "Seasonality of encounters, different shapes each year")+
+  theme_bw(base_size = 14)
+
+gp.seasonality
+
+## Checking results, as they don't match Evan's bar plots
+
+dat.fit$pred = as.numeric(predict(out.yearly, newdata = dat.fit, type = "response"))
+
+dat.fit |> 
+  mutate(doy = yday(event_date)) |> 
+ggplot(aes(x = doy, y = pred, col = mark_stage))+
+  geom_jitter(width = 0, height = 0.2)+
+  facet_wrap(.~ year)+
+  scale_x_continuous(labels = doy_2md)
+
+## Okay, what about a "generic" trip
+
+dat.pred = expand_grid(doy = seq(min(dat.fit$doy), max(dat.fit$doy), by = 1),
+                       mark_stage = factor("AD X Adult", levels = levels(dat.fit$mark_stage)),
+                       yearfac = unique(dat.fit$yearfac),
+                       angler_minutes = 120
+                       )
+
+dat.pred$count_predicted = as.numeric(predict(out.yearly, newdata = dat.pred, type = "response"))
+
+dat.pred |> 
+ggplot(aes(x = doy, y = count_predicted, col = mark_stage))+
+  geom_point()+
+  facet_wrap(.~ yearfac)+
+  scale_x_continuous(labels = doy_2md)+
+  theme_bw(base_size = 13)+
+  labs(x = "", title = "Daily predictions for 2 angler-hours")
+
+dat.pred |> 
+ggplot(aes(x = doy, y = count_predicted, col = yearfac, fill = yearfac))+
+  geom_polygon(alpha = 0.2)+
+  geom_path()+
+  scale_x_continuous(labels = doy_2md)+
+  theme_bw(base_size = 13)+
+  labs(x = "", title = "Daily predictions for 2 angler-hours")
+
+
+dat.fit |> 
+  group_by(year, doy) |> 
+  summarise(angler_hours = sum(angler_minutes)/60) |> 
+ggplot(aes(x = doy, y = angler_hours, col = as.factor(year), fill = as.factor(year)))+
+  # geom_col(alpha = 0.2)+
+  geom_smooth()+
+  scale_x_continuous(labels = doy_2md)+
+  theme_bw(base_size = 13)
+
+```
+
+
+```{r}
+dat.fit |> 
+  group_by(month, year) |> 
+  summarize(ad_per_hour = sum(ad_total) / sum(angler_minutes) * 60) |> 
+  ungroup() |> 
+  ggplot(aes(x = month, y = ad_per_hour, fill = as_factor(year)))+
+  geom_col()+
+  facet_wrap(.~ year)+
+  theme_bw(base_size = 13)
+
+gp.ad = dat.fit |> 
+  group_by(month, year) |> 
+  summarize(ad = sum(ad_total)) |> 
+  ungroup() |> 
+  ggplot(aes(x = month, y = ad, fill = as_factor(year)))+
+  geom_col()+
+  facet_wrap(.~ year)+
+  labs(title = "Fish encountered", 
+       y = "total ad encounters")+
+  theme_bw(base_size = 13)
+
+gp.time = dat.fit |> 
+  group_by(month, year) |> 
+  summarize(angler_minutes = sum(angler_minutes)) |> 
+  ungroup() |> 
+  ggplot(aes(x = month, y = angler_minutes, fill = as_factor(year)))+
+  geom_col()+
+  facet_wrap(.~ year)+
+  labs(y = "total angler minutes",
+       title = "Time spent")+
+  theme_bw(base_size = 13)
+
+gp.ad / gp.time
+```
+
+
+What is our total time breakdown by hour?
+
+```{r}
+dat.fit |> 
+  group_by(year) |> 
+  summarize(angler_hours = sum(angler_minutes)/60,
+            ad_total = sum(ad_total)) |> 
+  gt()
+```
+
+```{r}
+dat.fit |> 
+  group_by(year) |> 
+  summarize(angler_hours = sum(angler_minutes)/60) |> 
+  gt()
+```
+
+Angler minutes across seasons
+```{r}
+ggplot(dat.fit, aes(x = doy, y = angler_minutes))+
+  geom_jitter(width = 0.2, height = 0.2)+
+  scale_x_continuous(labels = doy_2md)+
+  facet_wrap(.~ yearfac)
+```
+
+
+```{r}
+out.yearly.boatly = gam(fish_count ~ 
+                          te(doy, mark_stage, yearfac, bs = c('tp', 'fs', 'fs')) + 
+                          boat_used +
+                          angler_minutes,
+                        method = "REML",
+                        family = "nb",
+                        data = dat.fit)
+
+out.yearly.boatly2 = gam(fish_count ~ 
+                           te(doy, mark_stage, yearfac, bs = c('tp', 'fs', 'fs')) + 
+                           angler_minutes:boat_used,
+                         method = "REML",
+                         family = "nb",
+                         data = dat.fit)
+
+out.yearly.boatly3 = gam(fish_count ~ 
+                           te(doy, mark_stage, yearfac, bs = c('tp', 'fs', 'fs')) + 
+                           angler_minutes*boat_used,
+                         method = "REML",
+                         family = "nb",
+                         data = dat.fit)
+```
+
+```{r}
+AIC(out, out.yearly, out.yearly.boatly, out.yearly.boatly2, out.yearly.boatly3)
+```
+
+We see the most support for a model that allows smooths to vary by year and accounts for boat effect -- both as a fixed effect (boat anglers caught more regardless of trip length) and interacting with angler minutes (After accounting for the general boat effect, boat anglers gained less by having longer trips than non-boat anglers).
+
+Out of curiosity, how much does boat effect matter?
+
+```{r}
+coef(out.yearly.boatly)[2:3]
+```
+
+That's a huge difference. How many minutes of fishing does boating count as?
+
+```{r}
+temp = coef(out.yearly.boatly)[2]/coef(out.yearly.boatly)[3]
+```
+
+A lot! `r round(temp/60, 1)` hours! That means the model predicts that a single angler on a boat fishing for an hour would have the same catch as a group of 5 anglers fishing for 6 hours.
+
+Let's look at the partial sum of predictors for a boat-user who fished for 60 minutes:
+```{r}
+sum(coef(out.yearly.boatly)[2:3]*c(1,60))
+```
+
+
+Quick look at benefits of boating and time on the water:
+
+```{r}
+dat.pred.1 = expand_grid(doy = mean(dat.fit$doy),
+                         yearfac = unique(dat.fit$yearfac)[1],
+                         mark_stage = dat.pred$mark_stage[1],
+                         angler_minutes = seq(min(dat.fit$angler_minutes), max(dat.fit$angler_minutes),
+                                              by = 1),
+                         boat_used = unique(dat.fit$boat_used))
+dat.pred.1$predicted_count = as.numeric(predict(out.yearly.boatly3, newdata = dat.pred.1, type = "response"))
+
+ggplot(dat.pred.1, aes(x = angler_minutes, y = predicted_count))+
+  geom_path()+
+  geom_rug(data = dat.fit |> filter(mark_stage == "AD X Adult"), aes(x = angler_minutes, y = fish_count))+
+  facet_wrap(.~ boat_used)+
+  labs(y = "predicted AD encounters",
+       title = "angler efficiency by time and boat status")
+```
+
+
+
 ### model diagnostics
+
+#### Shared shape model
+
+Examining the model that assumes the same smooth across doy in each year (seasonality is the same each year).
 
 First we check the model diagnostics
 
@@ -220,7 +632,7 @@ First we check the model diagnostics
 gam.check(out, rep = 500)
 ```
 
-These don't look great, and may reflect a mis-specified family.
+These don't look great, and may reflect a miss-specified family.
 
 We use the Dharma package to look for model fit. Note that because this is simulation-based and we have MANY observations, the significance of tests for deviations are going to be inflated. I'm looking into solutions to this.
 
@@ -232,15 +644,30 @@ testDispersion(simulationOutput)
 testZeroInflation(simulationOutput)
 ```
 
-In general these seem okay. Not perfect, and maybe our dispersion is not great.
 
-Fun little bit of foreshadowing: we can look for the excess or deficit of particular values using Dharma. Here's what happens when we use the summary statistic of "Number of 10s in the data").
+These seem fine -- we are not seeing any signs of problems
+
+#### Separate shape model
+
+Examining the model that assumes different smooths across doy in each year (seasonality can differ between years).
+
+First we check the model diagnostics
 
 ```{r}
-count_tens = function(x) sum(x == 10)
-testGeneric(simulationOutput, summary = count_tens, alternative = "greater")
-
+gam.check(out.yearly, rep = 500)
 ```
+
+These are not informative, although the k' being twice the edf suggests we likely aren't running too little flexibility (although this can be hard to parse given the high dimensionality).
+
+```{r}
+simulationOutput = simulateResiduals(fittedModel = out.yearly, plot = F)
+plot(simulationOutput)
+testOutliers(simulationOutput, type = "bootstrap")
+testDispersion(simulationOutput)
+testZeroInflation(simulationOutput)
+```
+
+These seem fine -- we are not seeing any signs of problems
 
 ### calculating predicted distributions
 

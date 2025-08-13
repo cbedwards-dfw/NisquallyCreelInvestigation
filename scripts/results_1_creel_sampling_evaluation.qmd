@@ -2,6 +2,7 @@
 title: "Creel survey sampling evaluation"
 execute:
     echo: false
+    cache: true
 author: "Evan Booher"
 format:
   docx: 
@@ -17,16 +18,18 @@ params:
   person_count_type: "angler"
   period_pe: "week"
   period_bss: "day"
-  days_wkend: "!r c('Saturday', 'Sunday')"
+  days_wkend: "!r c('Friday','Saturday', 'Sunday')"
   day_length_expansion: "night closure"
   min_fishing_time: 0.5
 ---
 
 ```{r libraries}
+options(scipen = 999)
 
 library(CreelEstimateR)
 library(creelutils)
 library(tidyverse)
+library(stringr)
 library(here)
 library(gt)
 library(glue)
@@ -39,6 +42,13 @@ library(knitr)
 # library(kableExtra)
 # library(flextable)
 ```
+
+```{r local edited function for processing interview data}
+#| cache: false
+# local edited function from creel_estimates 
+source(here::here("scripts", "prep_dwg_interview_angler_types_1.1.R"))   
+```
+
 
 ```{r}
 #| include: false
@@ -60,7 +70,123 @@ dwg$effort <- dwg$effort |>
     month = lubridate::month(.data$event_date),
     year = lubridate::year(.data$event_date),
     week = lubridate::week(.data$event_date)
+  ) 
+
+eff21 <- dwg$effort |>
+  filter(year == 2021) |> 
+   mutate(
+    # extract one or more digits at end of comments, then convert to integer
+    count_sequence = str_extract(comments, "\\d+$") %>% 
+                     as.integer()
   )
+
+dwg$effort  <- dwg$effort |> 
+  filter(year %in% c(2022,2023)) |> 
+  rbind(eff21)
+
+```
+
+```{r links to data, single fishery}
+#| eval: false
+#| results: asis
+
+fishery_name <- "Nisqually salmon 2021"
+
+dwg_base <- list(effort = "https://data.wa.gov/resource/h9a6-g38s.csv", 
+    interview = "https://data.wa.gov/resource/rpax-ahqm.csv", 
+    catch = "https://data.wa.gov/resource/6y4e-8ftk.csv", 
+    water_bodies = "https://data.wa.gov/resource/nbd2-vdmz.csv", 
+    closures = "https://data.wa.gov/resource/6zm6-iep6.csv", 
+    fishery_manager = "https://data.wa.gov/resource/vkjc-s5u8.csv")
+
+
+# Function to encode URL
+encode_url <- function(base_url, fishery_name) {
+  utils::URLencode(paste0(base_url, "?$where=fishery_name='", fishery_name, "'&$limit=100000"))
+}
+
+# Apply function to all base URLs
+links <- map(dwg_base, encode_url, fishery_name)
+
+
+# Generate Markdown links using the names of the endpoints for the link text.
+markdown_links <- map2_chr(names(links), links, 
+  ~ paste0("[", .x, "](", .y, ")")
+)
+
+# Output the Markdown links.
+# markdown_links
+
+# Create a data frame for the table
+df <- data.frame(
+  Link = markdown_links,
+  stringsAsFactors = FALSE
+)
+
+# Render a table where the markdown in the "Link" column is not escaped.
+# When you output this in a chunk with results = 'asis', Quarto will convert these into clickable links in Word.
+kable(df, escape = FALSE)
+
+# 
+# # Generate markdown links
+# map_chr(links, ~paste0("[Download public data](", .x, ")"))
+
+
+# links$effort <- utils::URLencode(paste0(dwg_base$effort,"?$where=fishery_name='", fishery_name, "'&$limit=100000"))
+# links$interview <- utils::URLencode(paste0(dwg_base$interview, "?$where=fishery_name='", fishery_name, "'&$limit=100000"))
+# links$catch <- utils::URLencode(paste0(dwg_base$catch, "?$where=fishery_name='", fishery_name, "'&$limit=100000"))
+# links$closures <- utils::URLencode(paste0(dwg_base$closures, "?$where=fishery_name='", fishery_name, "'&$limit=100000"))
+# links$locations <- utils::URLencode(paste0(dwg_base$fishery_manager, "?$where=fishery_name='", fishery_name, "'&$limit=100000"))
+# 
+# paste0("[Download public data](", links$effort , ")")
+# paste0("[Download public data](", links$interview , ")")
+# paste0("[Download public data](", links$catch , ")")
+# paste0("[Download public data](", links$closures , ")")
+# paste0("[Download public data](", links$locations , ")")
+# paste0("[Download public data](", links$effort , ")")
+```
+
+```{r generate data links for multiple fisheries}
+library(knitr)
+#| results: asis 
+#| eval: false
+
+# Define a vector of fishery names.
+fishery_names <- dwg$interview |> distinct(fishery_name) |> pull()
+
+# Define your base endpoints.
+dwg_base <- list(
+  effort          = "https://data.wa.gov/resource/h9a6-g38s.csv", 
+  interview       = "https://data.wa.gov/resource/rpax-ahqm.csv", 
+  catch           = "https://data.wa.gov/resource/6y4e-8ftk.csv", 
+  water_bodies    = "https://data.wa.gov/resource/nbd2-vdmz.csv", 
+  closures        = "https://data.wa.gov/resource/6zm6-iep6.csv", 
+  fishery_manager = "https://data.wa.gov/resource/vkjc-s5u8.csv"
+)
+
+# Function to build and URL-encode the full query URL for a given fishery.
+encode_url <- function(base_url, fishery_name) {
+  utils::URLencode(paste0(base_url, "?$where=fishery_name='", fishery_name, "'&$limit=100000"))
+}
+
+# Create a matrix (later converted to a data frame) with one column per fishery and one row per endpoint.
+# Each cell gets a clickable Markdown link whose text is the endpoint name.
+result <- sapply(fishery_names, function(fishery) {
+  sapply(names(dwg_base), function(endpoint) {
+    url <- encode_url(dwg_base[[endpoint]], fishery)
+    paste0("[", endpoint, "](", url, ")")
+  })
+}, simplify = TRUE, USE.NAMES = TRUE)
+
+# Convert the result to a data frame with row names corresponding to each data component.
+result_df <- as.data.frame(result, stringsAsFactors = FALSE, row.names = FALSE)
+# rownames(result_df) <- names(dwg_base)
+
+# Render the table.
+# Use results='asis' in your Quarto R chunk to output this table as raw Markdown,
+# so Pandoc interprets the Markdown links correctly when converting to Word.
+kable(result_df, escape = FALSE, align = "l", caption = "Table _. Links to creel survey data available through the state of Washington's open data portal, https://data.wa.gov.")
+
 
 ```
 
@@ -75,8 +201,6 @@ fisheries <- c(
 all_fisheries <- c(fisheries)
 
 ```
-
-
 
 ```{r query data}
 
@@ -103,14 +227,18 @@ if (interactive()) {
     filter(fishery_name %in% all_fisheries)
   
   # query total table
+  # creel_estimates$total <- creelutils::fetch_db_table(
+  #   con, "creel", "vw_model_estimates_total") |> 
+  #   filter(analysis_id %in% c("dbca0cf7-ff69-4c52-ab05-73d917b8c5aa", "80e4bde0-1795-467c-8c86-b820d6edd896"))
+  
   creel_estimates$total <- creelutils::fetch_db_table(
-    con, "creel", "vw_model_estimates_total") |> 
-    filter(analysis_id %in% "dbca0cf7-ff69-4c52-ab05-73d917b8c5aa")
+    con, "creel", "vw_model_estimates_total", filter = c("analysis_id %in% c('dbca0cf7-ff69-4c52-ab05-73d917b8c5aa', '80e4bde0-1795-467c-8c86-b820d6edd896')"))
   
   # query stratum table
   creel_estimates$stratum <- creelutils::fetch_db_table(
-    con, "creel", "vw_model_estimates_stratum") |> 
-    filter(analysis_id %in% "dbca0cf7-ff69-4c52-ab05-73d917b8c5aa")
+    con, "creel", "vw_model_estimates_stratum", filter = c("analysis_id %in% c('dbca0cf7-ff69-4c52-ab05-73d917b8c5aa', '80e4bde0-1795-467c-8c86-b820d6edd896')")) 
+# |> 
+    # filter(analysis_id %in% c("dbca0cf7-ff69-4c52-ab05-73d917b8c5aa", "80e4bde0-1795-467c-8c86-b820d6edd896"))
   
   # save queried model estimates as local file
   # needed for knitting as rstudioapi:: functions cannot be used during a Quarto render
@@ -136,8 +264,6 @@ creel_estimates$stratum <- creel_estimates$stratum |>
 
 
 ```
-
-
 
 ```{r report_tables}
 
@@ -253,12 +379,11 @@ summarise(
 
 ### Survey days and closures
 
-During the monitoring period from 2021 to 2023, a roving creel survey was conducted on the `r params$focal_waterbody` on `r report_tabs$survey_dates_summary[2]` out of the `r report_tabs$survey_dates_summary[1]` (`r round((report_tabs$survey_dates_summary[5]*100), 0)`%) days that the fishery was open. 
-
+During the monitoring period from 2021 to 2023, a roving creel survey was conducted on the `r params$focal_waterbody` on `r report_tabs$survey_dates_summary[2]` out of the `r report_tabs$survey_dates_summary[1]` (`r round((report_tabs$survey_dates_summary[5]*100), 0)`%) days that the fishery was open.
 
 ```{r fishing days table}
 #| eval: false
-#| include: false
+#| include: true
 
 # At the monthly time step the mean sampled proportion of open fishing days was `r report_tabs$survey_dates_monthly_summary$mean`
 
@@ -270,7 +395,9 @@ report_tabs$combined_dates_monthly_p |>
 ```
 
 ```{r fishing days plot}
-
+#| fig.cap: "Figure _. The number of open fishing days, survey days, and closure days per month during the Nisqually River salmon fishery from 2021 to 2023."
+#| fig-width: 8
+#| 
 fishing_days <- report_tabs$combined_dates_monthly_p |>
   dplyr::select(year, month, open_fishing_days = total_fishing_days, closure_days, survey_days) |> 
   pivot_longer(cols = c(open_fishing_days, survey_days, closure_days),
@@ -309,6 +436,8 @@ ggplot(aes(x = month, y = proportion_surveyed_all_dates)) +
 ```
 
 ```{r interview fishing time / angler type assigments}
+#| cache: false
+
 # use prep_dwg_interview_fishing_time, prep_dwg_interview_angler_types functions to calculate fishing time and create angler type assignments 
 dwg$interview <- 
     CreelEstimateR::prep_dwg_interview_fishing_time(
@@ -317,8 +446,6 @@ dwg$interview <-
       min_fishing_time = params$min_fishing_time,
       study_design = params$study_design
     )
-
-source(here("scripts", "prep_dwg_interview_angler_types_1.1.R"))     
 
 dwg$interview <- 
     prep_dwg_interview_angler_types(
@@ -338,6 +465,55 @@ dwg$interview <-
 #       angler_type_kayak_pontoon = params$angler_type_kayak_pontoon
 #     )
  
+    
+
+```
+
+```{r manual data edit for vehicle counts}
+#| include: false
+
+ # add +1 "dummy" vehicle counts to trailer counts for 2022,2023
+
+columns_to_keep <- setdiff(names(dwg$effort), c("count_type", "count_quantity"))
+
+census <- dwg$effort |> 
+  filter(tie_in_indicator == 1)
+index_2021 <- dwg$effort |> 
+  filter(tie_in_indicator == 0, year == 2021)
+  
+index_no_trailers <- dwg$effort |> 
+  filter(year %in% c(2022,2023), tie_in_indicator == 0) |> 
+   pivot_wider(
+    id_cols = all_of(columns_to_keep),
+    names_from = count_type,
+    values_from = count_quantity
+  ) |> 
+  filter(
+    `Trailers Only` == 0
+  ) |> 
+  pivot_longer(cols = c(`Vehicle Only`,`Trailers Only`), names_to = "count_type", values_to = "count_quantity")
+
+# filter to index counts and trailer counts > 0
+index_nonzero_trailers <- dwg$effort |>
+  filter(year %in% c(2022,2023), tie_in_indicator == 0) |> 
+  pivot_wider(
+    id_cols = all_of(columns_to_keep),
+    names_from = count_type,
+    values_from = count_quantity
+  ) |> 
+    filter(
+    `Trailers Only` > 0
+  ) |> 
+  mutate(
+    `Vehicle Only` = `Vehicle Only`+ `Trailers Only`
+  ) |> 
+  pivot_longer(cols = c(`Vehicle Only`,`Trailers Only`), names_to = "count_type", values_to = "count_quantity")
+
+dwg$effort <- index_nonzero_trailers |> 
+  rbind(index_no_trailers, census, index_2021) |> 
+  arrange(event_date, count_sequence)
+
+
 ```
 
 ### Angler interviews
@@ -363,27 +539,39 @@ report_tabs$trip_status_summary <- dwg$interview |>
     trip_status_proportion = round(n / total_interviews, 3) * 100
   )
 
-# pull out the total number of interviews obatined in section 2
+# pull out the total number of interviews obatined in section 1
 report_tabs$section_1_interviews <- dwg$interview |> filter(section_num == 1) |>  count(year, section_num) |> summarise(sum(n)) |> pluck() 
 
-# pull out the total number of interviews obatined in section 2
+# pull out the total number of interviews obatined in section 3
 report_tabs$section_3_interviews <- dwg$interview |> filter(section_num == 3) |>  count(year, section_num) |> summarise(sum(n)) |> pluck() 
 
-# pull out the total number of interviews obatined in section 2
+# pull out the total number of interviews obatined in section 4
 report_tabs$section_4_interviews <- dwg$interview |> filter(section_num == 4) |>  count(year, section_num) |> summarise(sum(n)) |> pluck() 
 
 ```
 
-In `r report_tabs$interview_totals[1,1]`, sampling for interviews only occurred in section 2, where we obtained a total of `r report_tabs$interview_totals[1,3]` interviews, representing `r report_tabs$interview_totals[1,6]` `r report_tabs$interview_totals[1,2]` angler groups and `r report_tabs$interview_totals[2,6]` `r report_tabs$interview_totals[2,2]` angler groups. In `r report_tabs$interview_totals[3,1]`, a total of `r report_tabs$interview_totals[3,3]` interviews were obtained, representing `r report_tabs$interview_totals[3,6]` `r report_tabs$interview_totals[3,2]` angler group interviews and `r report_tabs$interview_totals[4,6]` `r report_tabs$interview_totals[4,2]` angler group interviews. In `r report_tabs$interview_totals[5,1]`, a total of `r report_tabs$interview_totals[5,3]` interviews were obtained, representing `r report_tabs$interview_totals[5,6]` `r report_tabs$interview_totals[5,2]` angler group interviews and `r report_tabs$interview_totals[6,6]` `r report_tabs$interview_totals[6,2]` angler group interviews. Across all years the vast majority of interviews were obtained in section 2. Relatively few interviews were obtained in the lower river represented by section 1 (*n* = `r report_tabs$section_1_interviews`) and the upper river, represented by section 3 (*n* = `r report_tabs$section_3_interviews`), and section 4 (*n* = `r report_tabs$section_4_interviews`). Sample sizes in these areas were likely limited by accessibility and logistical constraints on sampling. See Table \_ for a breakout of the number of interviews obtained by year, section, and angler type.
+In `r report_tabs$interview_totals[1,1]`, sampling for interviews only occurred in section 2, where we obtained a total of `r report_tabs$interview_totals[1,3]` interviews, representing `r report_tabs$interview_totals[1,6]` `r report_tabs$interview_totals[1,2]` angler groups and `r report_tabs$interview_totals[2,6]` `r report_tabs$interview_totals[2,2]` angler groups. In `r report_tabs$interview_totals[3,1]`, a total of `r report_tabs$interview_totals[3,3]` interviews were obtained, representing `r report_tabs$interview_totals[3,6]` `r report_tabs$interview_totals[3,2]` angler group interviews and `r report_tabs$interview_totals[4,6]` `r report_tabs$interview_totals[4,2]` angler group interviews. In `r report_tabs$interview_totals[5,1]`, a total of `r report_tabs$interview_totals[5,3]` interviews were obtained, representing `r report_tabs$interview_totals[5,6]` `r report_tabs$interview_totals[5,2]` angler group interviews and `r report_tabs$interview_totals[6,6]` `r report_tabs$interview_totals[6,2]` angler group interviews. Across all years the vast majority of interviews were obtained in section 2. Relatively few interviews were obtained in the lower river represented by section 1 (*n* = `r report_tabs$section_1_interviews`) and the upper river, represented by section 3 (*n* = `r report_tabs$section_3_interviews`), and section 4 (*n* = `r report_tabs$section_4_interviews`). Sample sizes in these areas were likely limited by accessibility and logistical constraints for sampling staff. See Table \_ for a breakout of the number of interviews obtained by year, section, and angler type.
 
-```{r interview_and_catch}
+```{r}
+#| fig.cap: "Figure _. The number of interviews obtained, categorized by bank (blue) and boat (orange) angling groups, per month during the Nisqually River salmon fishery from 2021 to 2023."
 
-dwg$interview |>
-  count(water_body, year, section_num, angler_final) |> 
-  arrange(year, section_num, angler_final) |> 
-  select(year, section_number = section_num, angler_type = angler_final, count = n) |> 
+
+# number of angler groups interviewed (equivalent to # of interviews obtained)
+ dwg$interview |> 
+  count(year, month, angler_final, name = "interview_count") |> # count of interviews 
+  rename(angler_type = angler_final) |>
   rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |> 
-  gt(caption = "Table _. The number of interviews obtained during roving creel surveys, grouped by year, section, and angler type during the Nisqually River salmon fishery from 2021 to 2023.") 
+  ggplot(aes(x = as.factor(Month), y = `Interview count`, fill = `Angler type`)) +
+  geom_bar(stat = "identity", position = position_stack(), color = "black") +
+  facet_wrap(~ Year, scales = "free_x") +
+  # scale_x_discrete(limits = c('7', '8', '9', '10', '11', '12')) +
+  scale_fill_manual(values = c("bank" = "steelblue", "boat" = "orange"), 
+                    labels = c("Bank", "Boat")) +
+  labs(
+       x = "Month",
+       y = "Number of angler group interviews",
+       fill = "Angler type") +
+  theme_bw()
 
 ```
 
@@ -398,14 +586,26 @@ dwg$interview |>
   ) |>
   group_by(year, month) |>
   summarise(
-    min = min(daily_count),
-    max = max(daily_count),
     mean = mean(daily_count),
-    sd = sd(daily_count)
-    ,
-    .groups = "drop"
+    sd = sd(daily_count),
+    min = min(daily_count),
+    max = max(daily_count), .groups = "drop"
   ) |> 
+  mutate(across(mean:sd, ~ round(., 0))) |> 
   gt(caption = "Summary stats describing angler sampling by year and month, with daily minimum, maximum, and mean number of interviews obtained.") 
+
+```
+
+```{r interview_and_catch}
+#| eval: false
+#| include: false
+
+dwg$interview |>
+  count(water_body, year, section_num, angler_final) |> 
+  arrange(year, section_num, angler_final) |> 
+  select(year, section_number = section_num, angler_type = angler_final, count = n) |> 
+  rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |> 
+  gt(caption = "Table _. The number of interviews obtained during roving creel surveys, grouped by year, section, and angler type during the Nisqually River salmon fishery from 2021 to 2023.") 
 
 ```
 
@@ -437,33 +637,11 @@ dwg$interview |>
 
 ```
 
-```{r}
-#| fig.cap: "Figure _. The number of interviews obtained, categorized by bank (blue) and boat (orange) angling groups, per month during the Nisqually River salmon fishery from 2021 to 2023."
-
-
-# number of angler groups interviewed (equivalent to # of interviews obtained)
- dwg$interview |> 
-  count(year, month, angler_final, name = "interview_count") |> # count of interviews 
-  rename(angler_type = angler_final) |>
-  rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |> 
-  ggplot(aes(x = as.factor(Month), y = `Interview count`, fill = `Angler type`)) +
-  geom_bar(stat = "identity", position = position_stack(), color = "black") +
-  facet_wrap(~ Year, scales = "free_x") +
-  scale_x_discrete(limits = c('9', '10', '11', '12')) +
-  scale_fill_manual(values = c("bank" = "steelblue", "boat" = "orange"), 
-                    labels = c("Bank", "Boat")) +
-  labs(
-       x = "Month",
-       y = "Number of angler group interviews",
-       fill = "Angler type") +
-  theme_bw()
-
-```
-
 ```{r, month_mean_trip_length}
 #| include: false
 
 interview_group_sum_count_year_month_angler <- dwg$interview |>
+  filter(year %in% c(2022,2023)) |> 
   filter(previously_interviewed == 0|is.na(previously_interviewed)) |>
    mutate(
     total_group_count = if_else(is.na(total_group_count), angler_count, total_group_count)) |> 
@@ -473,26 +651,107 @@ interview_group_sum_count_year_month_angler <- dwg$interview |>
   ) |>
   rename(angler_type = angler_final)
 
-mean_trip_length_monthly <- dwg$interview |> 
+
+# sum of all angler hours reported in interviews
+fishing_time_sum <- dwg$interview |> 
   select(-angler_type) |> 
+  # filter(trip_status == "Complete", previously_interviewed == 0) |> # depends on whether field previsouly_interviewed was used!
+  rename(angler_type = angler_final) |> 
+  group_by(year, month, angler_type) |> 
+  summarise(
+    sum_fishing_hours = sum(fishing_time_total)
+  )
+  
+# mean trip length for individuals, not total angler group 
+# mean_trip_length_monthly <- dwg$interview |> 
+#   select(-angler_type) |> 
+#   # filter(trip_status == "Complete", previously_interviewed == 0) |> # depends on whether field previsouly_interviewed was used!
+#  rename(angler_type = angler_final) |> 
+#   filter(trip_status == "Complete") |> 
+#   group_by(year, month, angler_type) |> 
+#   summarize(
+#     n_completed_angler_trips = n(),
+#     mean_trip_length = mean(fishing_time),
+#     sd = sd(fishing_time),
+#     se = sd / sqrt(n_completed_angler_trips),
+#     cv = sd / mean_trip_length
+#   ) |> 
+#   left_join(fishing_time_sum)
+
+# mean trip length for individuals, not total angler group 
+# mean_trip_length_monthly <- dwg$interview |> 
+#   select(-angler_type) |> 
+#   # filter(trip_status == "Complete", previously_interviewed == 0) |> # depends on whether field previsouly_interviewed was used!
+#  rename(angler_type = angler_final) |> 
+#   filter(trip_status == "Complete") |> 
+#   group_by(year, month, angler_type) |> 
+#   summarize(
+#     n_completed_angler_trips = sum(angler_count),
+#     mean_trip_length = mean(fishing_time),
+#     sd = sd(fishing_time),
+#     se = sd / sqrt(n_completed_angler_trips),
+#     cv = sd / mean_trip_length
+#   ) |> 
+#   left_join(fishing_time_sum)
+
+
+# summary statistics for angler group interviews
+mean_group_trip_length_monthly <- dwg$interview |> 
+  select(-angler_type) |> 
+  filter(year %in% c(2022,2023)) |>
   # filter(trip_status == "Complete", previously_interviewed == 0) |> # depends on whether field previsouly_interviewed was used!
  rename(angler_type = angler_final) |> 
   filter(trip_status == "Complete") |> 
   group_by(year, month, angler_type) |> 
   summarize(
-    n_completed_angler_trips = n(),
-    mean_trip_length = mean(fishing_time),
-    sd = sd(fishing_time),
-    se = sd / sqrt(n_completed_angler_trips),
-    cv = sd / mean_trip_length
-  )
+    n_completed_group_interviews = n(),
+    mean_group_trip_length = mean(fishing_time_total),
+    sd = sd(fishing_time_total),
+    se = sd / sqrt(n_completed_group_interviews),
+    cv = sd / mean_group_trip_length
+  ) |>
+  left_join(fishing_time_sum)
 
-report_tabs$mean_trip_length_monthly <- mean_trip_length_monthly |> 
+
+mean_individual_trip_length_monthly <- dwg$interview |> 
+  select(-angler_type) |> 
+  # filter(year %in% c(2022,2023)) |>
+  # filter(trip_status == "Complete", previously_interviewed == 0) |> # depends on whether field previsouly_interviewed was used!
+ rename(angler_type = angler_final) |> 
+  filter(trip_status == "Complete") |> 
+  group_by(year, month, angler_type) |> 
+  summarize(
+    n_completed_group_interviews = n(),
+    mean_individual_trip_length = mean(fishing_time),
+    # mean_group_trip_length = mean(fishing_time_total),
+    sd = sd(fishing_time),
+    # se = sd / sqrt(n_completed_group_interviews),
+    # cv = sd / mean_individual_trip_length,
+    sum_angler_count = sum(angler_count)
+  ) |>
+  left_join(fishing_time_sum)
+
+mean_trip_length_annual <- dwg$interview |> 
+  filter(trip_status == "Complete") |>
+  group_by(angler_final) |> 
+  summarize(
+    n_completed_angler_trips = n(),
+    # n_individuals = sum(total_group_count),
+    mean_trip_length = mean(fishing_time),
+    # , # the mean trip length for groups, which is the matching resolution at which interviews are obtained!
+    sd = sd(fishing_time),
+    # se = sd / sqrt(n_completed_angler_trips),
+    cv = sd / mean_trip_length
+  ) |> 
+  rename(angler_type = angler_final) 
+
+
+report_tabs$mean_individual_trip_length_monthly <- mean_individual_trip_length_monthly |> 
   mutate(
-    mutate(across(mean_trip_length:cv, ~ round(., 2)))
+    mutate(across(mean_individual_trip_length:sum_fishing_hours, ~ round(., 2)))
   ) |> 
   rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |>
-  rename(SD = Sd, SE = Se, CV = Cv)
+  rename(SD = Sd)
 
 ```
 
@@ -501,18 +760,18 @@ report_tabs$mean_trip_length_monthly <- mean_trip_length_monthly |>
 #| fig.cap: "Figure _. Mean monthly trip time (± SD) of bank (blue) and boat (orange) angling groups surveyed on during the Nisqually River salmon fishery from 2021 to 2023."
 
 # Generate bar plot with error bars
-report_tabs$mean_trip_length_monthly |> 
-ggplot(aes(x = factor(Month), y = `Mean trip length`, fill = `Angler type`)) +
+report_tabs$mean_individual_trip_length_monthly |> 
+ggplot(aes(x = factor(Month), y = `Mean individual trip length`, fill = `Angler type`)) +
   geom_bar(stat = "identity", position = position_dodge(), color = "black") +
-  geom_errorbar(aes(ymin = `Mean trip length` - SD, ymax = `Mean trip length` + SD), 
+  geom_errorbar(aes(ymin = `Mean individual trip length` - SD, ymax = `Mean individual trip length` + SD), 
                 position = position_dodge(0.9), width = 0.25) +
   labs(
     x = "Month",
-    y = "Mean trip length",
+    y = "Mean angler trip length (hours)",
     fill = "Angler type"
   ) +
   facet_wrap(~ Year, scales = "free_x") +
-  scale_x_discrete(limits = c('9', '10', '11', '12')) +
+  # scale_x_discrete(limits = c('7', '8', '9', '10', '11', '12'))
   scale_fill_manual(values = c("bank" = "steelblue", "boat" = "orange"), 
                     labels = c("Bank", "Boat")) +
   theme_bw()
@@ -520,9 +779,11 @@ ggplot(aes(x = factor(Month), y = `Mean trip length`, fill = `Angler type`)) +
 ```
 
 ### Effort surveys
+
 #### Index effort counts
 
 ```{r report_effort_index_totals}
+#| include: false
 
 # summarise the index count data
 # not likely many useful insights from the individual counts
@@ -549,7 +810,20 @@ report_tabs$effort_index_monthly_summary_stats <- report_tabs$effort_index_mean_
   
 ```
 
+```{r effort index check}
+#| eval: false
+#| 
+dwg$effort |> 
+  filter(tie_in_indicator == 0) |> 
+  dplyr::group_by(year, month, section_num, event_date, count_sequence, count_type) |> #
+  dplyr::summarise(count_index = sum(count_quantity), .groups = "drop") |> 
+  dplyr::group_by(year, month, section_num, event_date, count_type) |> 
+  dplyr::summarise(count_index_mean = mean(count_index), .groups = "drop")
+
+```
+
 ```{r effort_index_annual_stats}
+#| include: false
 
 report_tabs$effort_index_annual_summary_stats <- report_tabs$effort_index_mean_daily |> 
   dplyr::group_by(year, count_type) |> 
@@ -561,18 +835,14 @@ report_tabs$effort_index_annual_summary_stats <- report_tabs$effort_index_mean_d
     maximum = max(count_index_mean)
   ) |> 
    mutate(across(where(is.numeric), round, digits = 2)) 
+
+# report_tabs$effort_index_annual_summary_stats <- report_tabs$effort_index_annual_summary_stats |> 
+#   filter(year %in% c(2022,2023))
 ```
 
-```{r}
-report_tabs$effort_index_annual_summary_stats <- report_tabs$effort_index_annual_summary_stats |> 
-  filter(year %in% c(2022,2023))
-```
+Annual patterns in counts of vehicles and trailers exhibited some variability among years during the monitoring period. In `r report_tabs$effort_index_annual_summary_stats[1,1]`, across all months the mean daily index effort count of boat trailers was `r report_tabs$effort_index_annual_summary_stats[1,4]` (SD = `r report_tabs$effort_index_annual_summary_stats[1,5]`, *n* = `r report_tabs$effort_index_annual_summary_stats[1,3]`) and the mean daily index effort count of vehicles was `r report_tabs$effort_index_annual_summary_stats[2,4]` (SD = `r report_tabs$effort_index_annual_summary_stats[2,5]`, *n* = `r report_tabs$effort_index_annual_summary_stats[2,3]`). In `r report_tabs$effort_index_annual_summary_stats[3,1]`, across all months the mean daily index effort count of boat trailers was `r report_tabs$effort_index_annual_summary_stats[3,4]` (SD = `r report_tabs$effort_index_annual_summary_stats[3,5]`, *n* = `r report_tabs$effort_index_annual_summary_stats[3,3]`) and the mean daily index effort count of vehicles was `r report_tabs$effort_index_annual_summary_stats[4,4]` (SD = `r report_tabs$effort_index_annual_summary_stats[4,5]`, *n* = `r report_tabs$effort_index_annual_summary_stats[4,3]`). In `r report_tabs$effort_index_annual_summary_stats[5,1]`, across all months the mean daily index effort count of boat trailers was `r report_tabs$effort_index_annual_summary_stats[5,4]` (SD = `r report_tabs$effort_index_annual_summary_stats[5,5]`, *n* = `r report_tabs$effort_index_annual_summary_stats[5,3]`) and the mean daily index effort count of vehicles was `r report_tabs$effort_index_annual_summary_stats[6,4]` (SD = `r report_tabs$effort_index_annual_summary_stats[6,5]`, *n* = `r report_tabs$effort_index_annual_summary_stats[6,3]`).
 
-Annual patterns in counts of vehicles and trailers were similar between years 2022 and 2023. In `r report_tabs$effort_index_annual_summary_stats[1,1]`, across all months the mean daily index effort count of boat trailers was `r report_tabs$effort_index_annual_summary_stats[1,4]` (SD = `r report_tabs$effort_index_annual_summary_stats[1,5]`, n = `r report_tabs$effort_index_annual_summary_stats[1,3]`) and the mean daily index effort count of vehicles was `r report_tabs$effort_index_annual_summary_stats[2,4]` (SD = `r report_tabs$effort_index_annual_summary_stats[2,5]`, n = `r report_tabs$effort_index_annual_summary_stats[2,3]`). In `r report_tabs$effort_index_annual_summary_stats[3,1]`, across all months the mean daily index effort count of boat trailers was `r report_tabs$effort_index_annual_summary_stats[3,4]` (SD = `r report_tabs$effort_index_annual_summary_stats[3,5]`, n = `r report_tabs$effort_index_annual_summary_stats[3,3]`) and the mean daily index effort count of vehicles was `r report_tabs$effort_index_annual_summary_stats[4,4]` (SD = `r report_tabs$effort_index_annual_summary_stats[4,5]`, n = `r report_tabs$effort_index_annual_summary_stats[4,3]`).
-**Add 2021 data to this paragraph
-
-Monthly vehicle and trailer count data exhibited some differences in variability related to time period and count type. The peak of index effort count data in 2023 occurred in October and index effort counts in November 2023 were lower than that observed in 2022 (Figure ). In each month, standard deviation of mean daily vehicle counts was larger than that observed for trailer counts, indicating more variability in index effort counts of vehicles than boat trailers.
-** update for Nisqually 
+Monthly vehicle and trailer count data exhibited similar seasonal patterns in across the three years, with some differences in variability related to time period and count type. Mean daily index effort counts in August and September of 2021 were higher than in corresponding months in 2022 and 2023. Importantly, we did not conduct census effort counts in 2021, which limits inferences that could be made regarding true difference in angling effort across years. In each month, the standard deviation of mean daily vehicle counts was larger than that observed for trailer counts, indicating more variability in index effort counts of vehicles than boat trailers.
 
 ```{r effort_index_annual_stats_table}
 #| include: false
@@ -585,7 +855,7 @@ report_tabs$effort_index_annual_summary_stats |>
 ```
 
 ```{r effort_index_box_whisker_plot}
-#| fig.cap: "Figure _. Box and whisker plot of mean daily index effort counts, categorized by vehicle (green) and boat trailer (red) count types, per month on the River from __ to __ . The lower and upper hinges correspond to the first and third quartiles (the 25th and 75th percentiles). The upper whisker extends from the hinge to the largest value no further than 1.5 * IQR from the hinge (where IQR is the inter-quartile range, or distance between the first and third quartiles). The lower whisker extends from the hinge to the smallest value at most 1.5 * IQR of the hinge. Data beyond the end of the whiskers are plotted individually. _________________."
+#| fig.cap: "Figure _. Box and whisker plot of mean daily index effort counts, categorized by vehicle (green) and boat trailer (red) count types, per month on the Nisqually River from 2021 to 2023. The lower and upper hinges correspond to the first and third quartiles (the 25th and 75th percentiles). The upper whisker extends from the hinge to the largest value no further than 1.5 * IQR from the hinge (where IQR is the inter-quartile range, or distance between the first and third quartiles). The lower whisker extends from the hinge to the smallest value at most 1.5 * IQR of the hinge. Data beyond the end of the whiskers are plotted individually."
 #| fig-width: 8
 
 # Generate boxplot
@@ -596,6 +866,22 @@ ggplot(aes(x = factor(Month), y = `Count index mean`, fill = `Count type`)) +
   labs(x = "Month",
        y = "Effort index count (mean daily)") +
   facet_wrap(~ Year, scales = "free_x") +
+  theme_bw()
+```
+
+```{r effort_index_line_plot}
+#| fig.cap: "Figure _. Mean daily index effort counts of vehicles and trailers from 2021 through 2023 in the Nisqually River. July counts are not shown for 2022 and 2023 for consist"
+#| fig-width: 8
+
+# Generate boxplot
+report_tabs$effort_index_mean_daily |> 
+filter(month %in% c(7,8,9,10,11)) |> 
+rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |> 
+ggplot(aes(x = `Event date`, y = `Count index mean`, color = `Count type`)) +
+  geom_point() +
+  labs(x = "Date",
+       y = "Effort index count (mean daily)") +
+  facet_wrap(~ Year, scales = "fixed") +
   theme_bw()
 ```
 
@@ -625,13 +911,10 @@ report_tabs$effort_census_annual_summary <- report_tabs$effort_census_events |>
 
 ```
 
-In both `r report_tabs$effort_census_annual_summary[1,1]` and `r report_tabs$effort_census_annual_summary[1,1]` we conducted `r report_tabs$effort_census_annual_summary[1,2]` census effort counts of anglers (appendix ). Proportions of observed angler types were similar across years. Cumulative counts of two angler types, 1) boat anglers using a drift boat or raft and 2) bank anglers without a vessel, made up 91% of observed anglers in 2022 and 88% of anglers in 2023 (Figure ).
-
-
 ```{r report_effort_census_percentage_angler_type}
 #| include: false
 
-dwg$effort |>
+census_effort_proportions <- dwg$effort |>
   filter(tie_in_indicator == 1) |> 
   group_by(year) |> 
   mutate(total = sum(count_quantity)) |> 
@@ -644,11 +927,15 @@ dwg$effort |>
   ) |> 
   distinct() |> 
   select(-c(total)) |> 
-  arrange(year, desc(percentage)) |> 
+  arrange(year, desc(percentage))
+
+census_effort_proportions |> 
   rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |> 
   gt()
 
 ```
+
+In `r report_tabs$effort_census_annual_summary[1,1]` we conducted `r report_tabs$effort_census_annual_summary[1,2]` census effort counts of anglers. In `r report_tabs$effort_census_annual_summary[2,1]` we conducted `r report_tabs$effort_census_annual_summary[2,2]` census effort counts of anglers. Proportions of observed angler types were similar across years. Cumulative census counts of two angler types, 1) bank anglers without a vessel, and 2) boat anglers using a motorized boat, drift boat, or raft made up `r census_effort_proportions[1,4]*100`% and `r (census_effort_proportions[2,4]+census_effort_proportions[3,4])*100`% of observed anglers in 2022, respectively, and `r census_effort_proportions[8,4]*100`% and `r (census_effort_proportions[9,4]+census_effort_proportions[10,4])*100`% of observed anglers in 2023 (Figure ).
 
 ```{r census_count_histogram}
 
@@ -665,7 +952,7 @@ dwg$effort |>
 ```
 
 ```{r census_count_totals_barplot}
-#| fig.cap: "Figure _. Stacked barplots with cumulative counts of anglers observed during census effort count surveys in ______. The table contains cumulative counts, with each row grouped by angler type and columns grouping data by year."
+#| fig.cap: "Figure _. Stacked barplots with cumulative counts of anglers observed during census effort count surveys in the Nisqually River in 2022 and 2023. The table contains cumulative counts, with each row grouped by angler type and columns grouping data by year."
 
 # Prepare summary table
 df_summary <- dwg$effort |> 
@@ -709,8 +996,6 @@ bar_plot <- ggplot(dwg$effort |>
 grid.arrange(bar_plot, table_plot, heights = c(8,4))
 ```
 
-
-
 ```{r effort_estimates}
 #| include: false
 
@@ -750,41 +1035,95 @@ plot_effort_avg_effort
 
 ```
 
+### Angler trips and sampling rate
+
+#### Estimated number of angler trips
+
+Across all months and years, the mean trip length of banks anglers was `r round(mean_trip_length_annual[1,3], 2)` hours (SD = `r round(mean_trip_length_annual[1,4], 2)`, CV = `r round(mean_trip_length_annual[1,5], 2)`), and the mean trip length of boat anglers was `r round(mean_trip_length_annual[2,3], 2)` hours (SD = `r round(mean_trip_length_annual[2,4], 2)`, CV = `r round(mean_trip_length_annual[2,5], 2)`). Bank anglers on average fished for less time than boat anglers and exhibited more variability in trip length time. Within each angler type, estimates of mean trip length exhibited little variability across months and lacked discernible temporal trends (Figure 9).
+
 ```{r angler_trip_tables}
 #| include: false
 #| eval: true
 
 # calculate estimated number of angler trips - total effort / mean trip length (for groups, not individuals)
-angler_trips <- mean_trip_length_monthly |> 
+# to do! create one table with information for group and individual anglers (fishing time total / fishing time)
+
+angler_trips <- mean_individual_trip_length_monthly |> 
   ungroup() |> 
   left_join(avg_effort, by = c("year", "month", "angler_type")) |> 
   mutate(
-    estimated_angler_trips = mean_total_effort / mean_trip_length
+    estimated_angler_trips = mean_total_effort / mean_individual_trip_length
   ) |> 
   left_join(interview_group_sum_count_year_month_angler, by = c("year", "month", "angler_type")) |> 
   mutate(
     angler_type = str_to_sentence(angler_type)
    ) |> 
   mutate(
-    sampled_proportion =  n_individuals / estimated_angler_trips
+    sampled_angler_trip_proportion =  sum_angler_count / estimated_angler_trips,
+    sampled_angler_hours_proportion = sum_fishing_hours / mean_total_effort
   )
 
-angler_trips_aggregate <- mean_trip_length_monthly |> 
+
+angler_trips_angler_type_aggregate <- mean_individual_trip_length_monthly |> 
   ungroup() |> 
   left_join(avg_effort, by = c("year", "month", "angler_type")) |> 
   mutate(
-    estimated_angler_trips = mean_total_effort / mean_trip_length
+    estimated_angler_trips = mean_total_effort / mean_individual_trip_length
   ) |> 
   left_join(interview_group_sum_count_year_month_angler, by = c("year", "month", "angler_type")) |> 
   mutate(
     angler_type = str_to_sentence(angler_type)
    ) |> 
   # ungroup() |> 
-  group_by(year, month) |> 
+  group_by(year, month, angler_type) |> 
   summarise(
-    total_individuals = sum(n_individuals), 
+    total_individuals = sum(sum_angler_count), 
     total_trips = sum(estimated_angler_trips),
     sampled_proportion =  total_individuals / total_trips, .groups = "drop"
+  )
+
+
+
+angler_trips_aggregate <- mean_individual_trip_length_monthly |> 
+  filter(!year == 2021) |> 
+  ungroup() |> 
+  left_join(avg_effort, by = c("year", "month", "angler_type")) |> 
+  mutate(
+    estimated_angler_trips = mean_total_effort / mean_individual_trip_length
+  ) |> 
+  left_join(interview_group_sum_count_year_month_angler, by = c("year", "month", "angler_type")) |> 
+  mutate(
+    angler_type = str_to_sentence(angler_type)
+   ) |> 
+  # ungroup() |> 
+  group_by(year, angler_type) |> 
+  summarise(
+    total_individuals = sum(sum_angler_count), 
+    total_trips = sum(estimated_angler_trips),
+    sampled_proportion =  total_individuals / total_trips, .groups = "drop"
+  )
+
+
+angler_trips_aggregate_final <- mean_individual_trip_length_monthly |> 
+  ungroup() |> 
+  left_join(avg_effort, by = c("year", "month", "angler_type")) |> 
+  mutate(
+    estimated_angler_trips = mean_total_effort / mean_individual_trip_length
+  ) |> 
+  left_join(interview_group_sum_count_year_month_angler, by = c("year", "month", "angler_type")) |> 
+  mutate(
+    angler_type = str_to_sentence(angler_type)
+   ) |> 
+  # ungroup() |> 
+  group_by(angler_type, year) |> 
+  summarise(
+    total_individuals = sum(sum_angler_count), 
+    total_trips = sum(estimated_angler_trips),
+    total_interview_hours = sum(sum_fishing_hours),
+    total_estimated_effort = sum(mean_total_effort),
+    sampled_proportion_trips =  total_individuals / total_trips,
+    sampled_proportion_hours = total_interview_hours / total_estimated_effort,
+    .groups = "drop"
   )
 
 # |>
@@ -792,20 +1131,22 @@ angler_trips_aggregate <- mean_trip_length_monthly |>
 
 ```
 
+#### Angler Sampling rate
+
+Using the monthly mean trip time and estimated seasonal total angling effort (angler-hours), we estimated the number of bank and boat angler trips. In 2022, an estimated `r 16202 + 1109` angling trips occurred *(n*~bank~ = `r round(angler_trips_aggregate[1,4], 0)`, *n*~boat~ = `r round(angler_trips_aggregate[2,4], 0)`. In 2023, an estimated `r 17149 + 1227` angling trips occurred (*n*~bank~ = `r round(angler_trips_aggregate[3,4], 0)`, *n*~boat~ = `r round(angler_trips_aggregate[4,4], 0)`. Given relative consistency in monthly mean trip length estimates (Figure 9), the estimated number of angler-trips per month (Figure 10) followed a similar pattern to the estimated seasonal total angler effort.
 
 ```{r angler_trip_table}
 #| eval: false
 #| include: false
 
 angler_trips |>
-  mutate(across(mean_trip_length:cv, ~ round(., 2))) |>
-  mutate(across(sampled_proportion, ~ round(., 2))) |> 
-  gt() 
-# |> 
-#   knitr::kable(caption = "Table _. Table with angler trip information.")
+  drop_na(mean_total_effort) |> 
+  mutate(across(mean_individual_trip_length:sd, ~ round(., 2))) |>
+  mutate(across(sampled_angler_trip_proportion:sampled_angler_hours_proportion, ~ round(., 2))) |> 
+  gt()
+  # knitr::kable(caption = "Table _. Table with angler trip information.")
 
 ```
-
 
 {{< pagebreak >}}
 
@@ -814,13 +1155,14 @@ angler_trips |>
 
 # number of angler groups interviewed (equivalent to # of interviews obtained)
 angler_trips |> 
+    drop_na(mean_total_effort) |> 
   # count(year, month, angler_final, name = "interview_count") |> # count of interviews 
   # rename(angler_type = angler_final) |>
   # rename_with(~ . |>  str_replace_all("_", " ") |> str_to_sentence()) |> 
   ggplot(aes(x = as.factor(month), y = estimated_angler_trips, fill = angler_type)) +
   geom_bar(stat = "identity", position = position_stack(), color = "black") +
   facet_wrap(~ year, scales = "free_x") +
-  scale_x_discrete(limits = c('9', '10', '11', '12')) +
+  # scale_x_discrete(limits = c('7', '8', '9', '10', '11', '12'))
   scale_fill_manual(values = c("Bank" = "steelblue", "Boat" = "orange"), 
                     labels = c("Bank", "Boat")) +
   labs(
@@ -836,6 +1178,7 @@ angler_trips |>
 # fit simple linear regression models: estimated # angler trips (monthly) ~ # of interviews (monthly) 
 
 nested_models <- angler_trips |> 
+  drop_na(mean_total_effort) |> 
   nest(data = -angler_type) |> 
   mutate(
     model = map(data, ~ {
@@ -857,8 +1200,6 @@ nested_models <- angler_trips |>
     })
   )
 ```
-
-
 
 ```{r extract_coefficients}
 #| include: false
@@ -894,13 +1235,12 @@ model_statements <- map_dfr(nested_models$model, ~ {
 
 ```
 
-
-### Angler trips and sampling rate
-
-The estimated number of monthly individual angler trips was related to the observed number of individual anglers that were interviewed during creel surveys (Figure ; Bank: p < `r round(nested_models$model_summary[[1]]$p.value, 3)`, R^2^ = `r round(nested_models$model_summary[[1]]$r.squared, 2)`; Boat: p < `r round(nested_models$model_summary[[2]]$p.value, 4)`, R^2^ = `r round(nested_models$model_summary[[1]]$r.squared, 2)`). The linear model fit for bank anglers was parameterized as: y(Estimated Angler Trips) = `r model_statements$slope[1]` (Angler Interviews) `r model_statements$intercept[1]`. The linear model fit for boat anglers was parameterized as: y(Estimated Angler Trips) = `r model_statements$slope[2]` (Angler Interviews) `r model_statements$intercept[2]`. Therefore, approximately `r round((1/model_statements$slope[1])*100, 0)`% of bank anglers were interviewed, and approximately `r round((1/model_statements$slope[2])*100, 0)`% of boat anglers were interviewed, across all months and years.
+```{r}
+# The estimated number of monthly individual angler trips was related to the observed number of individual anglers that were interviewed during creel surveys (Figure ; Bank: p < `r round(nested_models$model_summary[[1]]$p.value, 6)`, R^2^ = `r round(nested_models$model_summary[[1]]$r.squared, 2)`; Boat: p < `r round(nested_models$model_summary[[2]]$p.value, 4)`, R^2^ = `r round(nested_models$model_summary[[2]]$r.squared, 2)`). The linear model fit for bank anglers was parameterized as: y(Estimated Angler Trips) = `r model_statements$slope[1]` (Angler Interviews) `r model_statements$intercept[1]`. The linear model fit for boat anglers was parameterized as: y(Estimated Angler Trips) = `r model_statements$slope[2]` (Angler Interviews) `r model_statements$intercept[2]`. Therefore, approximately `r round((1/model_statements$slope[1])*100, 0)`% of bank anglers were interviewed, and approximately `r round((1/model_statements$slope[2])*100, 0)`% of boat anglers were interviewed, across all months and years.
+```
 
 ```{r model_fit_and_observed_data_plot}
-#| eval: true
+#| eval: false
 #| fig.cap: "Figure _. The estimated number of individual-level angler trips as a function of the total number of individuals within anglers groups interviewed per month, categorized by bank (blue) and boat (orange) angling groups, on the Humptulips River from September 1, 2022 to November 29, 2023. The fishery was closed through emergency regulations from October 8, 2022 to October 28, 2022 due to drought conditions. The fishery was not open in December 2023."
 
 
@@ -965,6 +1305,30 @@ ggplot(predicted_data, aes(x = n_individuals, y = estimated_angler_trips, color 
 #   theme_bw() 
 ```
 
+```{r}
+# Unnest predictions
+predicted_data <- nested_models |>  
+  unnest(predictions)
+
+# Determine maximum y-value for consistency across plots
+max_y <- max(predicted_data$estimated_angler_trips, predicted_data$pred, na.rm = TRUE)
+
+# Generate separate plots for each angler type
+
+ggplot(predicted_data, aes(x = n_individuals, y = estimated_angler_trips, color = angler_type)) +
+  geom_point(size = 2, alpha = 0.8) +  # Observed data
+  geom_line(aes(y = pred), size = 1) +  # Fitted regression line
+  geom_text(aes(label = month), vjust = -0.5, size = 3.5, color = "black", check_overlap = TRUE) +  # Add month labels
+  facet_wrap(~ angler_type + year, scales = "free") +  # Allow scales to vary by angler type
+  labs(
+    color = "Angler type",
+    x = "Number of individuals in interviewed groups (monthly)",
+    y = "Estimated number of individual-level angler trips (monthly)"
+  ) +
+  scale_color_manual(values = c("Bank" = "steelblue", "Boat" = "orange"),
+                     labels = c("Bank", "Boat")) +
+  theme_bw()
+```
 
 ```{r sample_rate_vs_estimated_effort_plot}
 #| eval: true
@@ -976,7 +1340,7 @@ ggplot(predicted_data, aes(x = n_individuals, y = estimated_angler_trips, color 
 # The proportion of all individual anglers (i.e., angler trips for bank and boat anglers combined) that were interviewed by a sampler varied among months between `r round(min(angler_trips_aggregate$sampled_proportion),2)` in September 2022 and `r round(max(angler_trips_aggregate$sampled_proportion),2)` in December 2022. Given that our sampling in terms of survey days of staffing was relatively stable across years and months (Figure ), variation in our sampling rate of anglers was likely related to seasonal dynamics in angler effort (Figure ). 
 
 
-ggplot(angler_trips, aes(x = mean_total_effort, y = sampled_proportion, color = angler_type)) +
+ggplot(angler_trips, aes(x = mean_total_effort, y = sampled_angler_trip_proportion, color = angler_type)) +
   geom_point(size = 2, alpha = 0.8) +        # Observed data
   labs(
     # size = 4,
@@ -1003,4 +1367,3 @@ ggplot(angler_trips, aes(x = mean_total_effort, y = sampled_proportion, color = 
 #   geom_point()
 
 ```
-

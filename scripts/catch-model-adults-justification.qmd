@@ -1,0 +1,1714 @@
+---
+title: "Catch model"
+author: "Collin Edwards"
+editor: visual
+---
+
+## Purpose
+
+This report summarizes the Nisqually freshwater creel data from 2021-2023 and documents the process of developing a model to predict angler encounter rates of adult Chinook salmon. By the end of this report, we hope the reader will feel confident that the model structure and fitting choices of our final model are the best choice.
+
+### Why a model of *encounter rates*?
+
+Our ultimate goal is to identify and quantify any bias in creel reporting. A key motivation for this project was a noticeable mismatch in weekly estimated mark rates between tribal net data and sport creel data. So why are we modeling encounter rates instead of mark rates?
+
+Well, we *are* also developing an analogous model of mark rates, but we don't expect it to be as useful as a model of encounter rates. To detect bias, we need to be able to identify when creel interviews seem abnormal. But if an angler reports encountering 1 fish total, the mark rate for that angler will have to be either 0% or 100%. 66% of creel interviews that included a Chinook encounter had only one encounter. So two thirds of our data will necessarily show the most extreme possible mark rates, making it pretty hard to tease out actual abnormal or problematic records from mark rate alone.
+
+Our creel interviews include additional information, though, including the start and end times of fishing trips. A model of encounter rates allows us to leverage this extra information, and gives us a different angle of attack for identifying problematic interviews. If an angler reported encountering two unmarked fish and no marked fish, it would be hard to say with confidence that the mark rate of that interview was abnormal unless the underlying mark rate is incredibly high. But if they claimed to have been fishing for only half an hour, on the bank, and at the tail end of the season, we can potentially feel confident that their reported encounter rate of unmarked fish under those conditions was abnormal.
+
+Additionally, one of the forms of bias we will be investigating -- digit bias -- is only detectable by looking at the number of fish encountered, and cannot be identified from the ratio of marked and unmarked fish.
+
+### Goal of the model
+
+We will be using our encounter rate model to identify individual interviews that are abnormal and patterns of abnormality. For this to work, we need our model to represent reasonable expectations of catch rates, such that biased interviews will be poorly predicted by the model but truthful interviews will be reasonably predicted by the model. As we develop the model, this means we need to focus on (a) ensuring we represent biologically real processes as best as we can given our data, and (b) ensuring that the model is not so flexible that it can fit outliers or patterns of biased reporting. Another way to think about (b) is that we can't slice our data too thin: if we choose a model that breaks the data into many small groups and estimates their expected catch rates separately, the model will probably find that every data point seems reasonable.
+
+The choice of error distribution (e.g., Poisson, negative binomial, zero-inflated models) are usually important to consider when fitting models, but that choice is especially important here. Among other things, the error distribution can constrain how likely the model thinks extreme values are. As we are especially interested in possible misreporting in interviews that reported high catch, the wrong choice of error distribution could lead us to mistrust many of our truthful interviews or to trust misreported interviews.
+
+### Modeling considerations
+
+We will be comparing options for several aspects of the model. We outline them here. For reasons we describe in "model structure" below, all of our models will be generalized additive models -- specifically smoothing splines -- and some of our modeling considerations (and selection approaches, below) are specific to smoothing splines.
+
+#### Model structure:
+
+What predictors are we including, and how are we including them? These will determine what biological processes the model is able represent. We expect some of the following factors to affect catch rates:
+
+-   fish fin mark type
+-   adult vs jack (but see Data Constraints below)
+-   the time of year in which the interview took place (see below)
+-   the time of day the fishing trip started at (e.g. to catch the first bite effect)
+-   whether the interviewed angler(s) used a boat of fished from the bank
+-   the amount of effort (anglers x minutes) spent fishing
+-   the year in which the interview took place
+
+We can test which of those terms help predict catch rates.
+
+Salmon returns are seasonal -- initially catch rates are very low, they increase as the season goes on, and finally they decline back to very low rates. Because the exact shape of this seasonality isn't known and potentially could vary across years, life stages, etc, we chose to represent seasonality with a penalized smooth. These are a very popular way of handling the effects of continuously varying predictors when their relationship with the response is unknown and expected to be nonlinear. \[CBE: consider cutting the following?\] Smoothing splines are also a tool that I (CBE) have quite a lot of experience using, including numerous peer reviewed publications using smoothing splines and several developing new smoothing spline methods. There will be figures below that illustrate what a seasonality smooth looks like in the context of the Nisqually creel data.
+
+#### Smooth specifications
+
+As a baseline, we choose to represent seasonality as a smooth across numeric day of year. However, there are several choices to make with regard to this:
+
+-   Do we want to allow seasonality to vary between years?
+-   Do we want to allow seasonality to vary between boat and bank anglers?
+-   Do we want to allow seasonality to vary marked and unmarked fish?
+
+Additionally, smooths are in part specified by their maximum flexibility. Get that number too low and a complex nonlinear shape may be approximated by a gaussian curve or even a straight line. Get that number too high and the model may begin to overfit the data, producing very wiggly smooths. In theory penalized smoothing splines -- like we use here -- should be immune to overfitting. In practice, they are fairly resilient but can still run into problems, especially for complex smooth shapes (e.g., if we are allowing the smooth to vary between years or between boat and bank anglers or both).
+
+Based on our data, we chose to test maximum flexibility values of - k = 10 - k = 20 - k = 30
+
+(The exact interpretation of k is pretty technical, but it does represent the maximum degrees of freedom of the resulting smooth. As a reference point, the default k in the `mgcv` package is 10, and a Gaussian curve can be exactly approximated by a k of 3.)
+
+**Technical notes**: when allowing seasonality to vary by some other categorical predictor, we implemented these with tensor product smooths with a thin-plate regression spline basis (`"tp"`) in the day-of-year dimension and a factor smoother class (`"fs"`) in the categorical dimension(s). When using a tensor product smooth, any categorical predictors included in the tensor product smooth are fully penalized, [so we no longer need to include that predictor as a fixed effect](https://gavinsimpson.github.io/physalia-gam-course/day-3/index.html#29). When assessing appropriate flexibility with a tensor product smooth, we applied the k values from above (10, 20, 30) in the day-of-year dimension, and in the categorical predictor dimensions we used a k equal to the number of levels of that factor (standard practice for `bs = 'fs'`.
+
+#### Error distribution
+
+When fitted a statistical model, the error distribution determines how the model evaluates the likelihood of actual observations that differ from the model expectations. Because data likelihood plays a role in the model-fitting process, this also affects the coefficients of the best-fitting model. Linear regression uses a Gaussian (normal) error distribution. However, the Gaussian error distribution is not appropriate for count data -- the Gaussian is continuous and can be negative, while counts cannot be.
+
+We start by using the negative binomial error distribution -- this is commonly the most appropriate distribution for ecological statistics, as it explicitly models count data and it can handle overdispersion in the data (something the simpler Poisson distribution cannot).
+
+However, the negative binomial distribution is not the only way to model count data that might be overdispersed. We also tested the zero-inflated Poisson distribution, which is implemented using a hurdle model. This effectively models two processes "What is the probability that you COULD catch a fish", and "If you could catch a fish, how many did you catch?". Here we can think about that first process as a way to account for high numbers of zeroes. \### Concessions due to data limitations
+
+We have a substantial quantity of creel data, but that is primarily adults, primarily marked, and primarily comes from bank anglers. Further, creel region within the Nisqually is strongly correlated with boat vs bank angler. We had to make the following decisions with these data constraints in mind:
+
+-   **No jacks in this model**: Data on unmarked jacks in particular was incredibly sparse, and trying to include jacks in the model effectively necessitated either removing fin mark as a predictor entirely, or lumping marked and unmarked jacks together. Rather than make compromises in modeling adult Chinook, we are developing a separate model of Jacks that can be made simpler to accommodate the sparse Jack data.
+
+-   **No inclusion of region**: Creel data in the Nisqually is identified by region, and it seems reasonable that catch rates could vary between regions. However, (a) the upper reaches of the Nisqually have very little creel data, and (b) that data is overwhelmingly from boat anglers. Because boat use and region covary strongly, it is not appropriate to include both in our models. We have strong *a priori* expectations that anglers in boats will have higher catch rates than anglers on the banks, so we choose to include boat use and not region in our model development process.
+
+-   **Being careful about interactions with boat use**: In our exploration of model structures below, we were interested in seeing if smooths should differ between bank and boat users. For example, data summaries show that the highest average boat encounter rates were on different days than the highest average bank encounter rates. However, because we only had approximately 60 boat interviews per year and we were already fitting a fairly complex model, allowing seasonality to vary by year and by boat use led to trouble.
+
+### Spoilers
+
+The rest of this document will walk through the analyses we carried out to identify the most appropriate model. To skip to the conclusion, that model
+
+-   
+
+-   
+
+-   
+
+-   uses a k of 30 for the day-of-year dimension of the smooth
+
+-   uses a negative binomial error distribution
+
+#### What does that mean in plain English?
+
+Our model predicts encounter rates of
+
+### Model selection approaches
+
+To decide which model choices are best, we first fit separate models using each of the identified options for model-fitting, and then compare how well those models fit. That comparison comes in several flavors.
+
+First, we can use Akaike Information Criterion (AIC) to approximate the relative predictive power of each model. AIC can be used to compare multiple models that are fit to the same data, and the model with the lowest score has the most support. Typically AIC does a good job of identifying the model with the strongest predictive power, but may favor models that include some spurious predictors. For our purposes this is appropriate; if we were interested in more inferential statistics, we would want to use methods that are stricter about the inclusion of predictors (e.g. a likelihood ratio test).
+
+Second, we can look at plots of model predictions and ensure they make sense. This is especially helpful when making sure that smooths are sufficiently flexible but not too flexible. To streamline the visualization process, I have written [this R package](https://cbedwards-dfw.github.io/VizSeasonalGams/).
+
+Third, we can look at gam model diagnostics for the smooth terms. This can help identify if we haven provided sufficient flexibility for a smooth.
+
+Fourth, we can look at the suite of model diagnostics provided by the `DHARMa` package. Commonly used model diagnostics tools (e.g., residual plots built into the `mgcv` package) can be either misleading or hard to interpret when working with models of count data. The DHARMa package uses a simulation approach to generate meaningful null expectations, and then implements a series of tests including for overdispersion, zero inflation, etc. When looking at model diagnostics, we are not concerned with the presence of outleiers, because we will ultimately be looking for bias in the form of outliers. For this reason we will not address tests of outliers.
+
+### Reading the rest of this document
+
+We first set up some functions and read in the data in the "Setup" section. We then explore the raw data to look for some patterns in the "Looking at the data" section. We finally walk through the model comparison process in the "Model fitting" section.
+
+We have saved csv versions of the two key data files we use (`dat.fit` and `dat.sum`), and we will offer those files with this document.
+
+## Setup
+
+### libraries
+
+```{r}
+library(here)
+library(tidyverse)
+library(lme4)
+library(mgcv)
+library(patchwork)
+library(gt)
+library(hms)
+use("bbmle", c("AICtab"))
+library(gtExtras)
+library(gratia)
+library(DHARMa)
+library(rlang)
+library(VizSeasonalGams) #install with `pak::pak("cbedwards-dfw/VizSeasonalGams")`
+```
+
+### functions
+
+
+```{r augment_drawn_doy_panel}
+
+augment_drawn_doy_panel = function(cur.panel, #panel from draw.gam, accessed with [[1]], etc
+                                   dat.orig, # original data used in fitting model
+                                   maintain_limits = FALSE){
+  ## function to (a) give more reasonable limits of the day of year based on
+  ## the existing data, and
+  ## (b) add a histogram of data coverage under the primary plot, aligned and 
+  ## sharing axis information
+  ## 
+  ## Dev notes:
+  ## This is tailored specifically to nisqually creel bias investigation. Some of 
+  ## this code would need to be revised to make it more generalizable. Notably, 
+  ## the histogram only makes sense when x values of are on a discrete basis,
+  ## and hard-codoing "doy" but the x axis might be any sort of term. 
+  ## Also, may not handle multiple by dimensions
+  facet_by = cur.panel$data$.by[1]
+  
+  dat.lims = dat.orig |> 
+    group_by(.data[[facet_by]]) |> 
+    summarize(lower_doy = quantile(doy, 0.01),
+              upper_doy = quantile(doy, 0.99)) |> 
+    ungroup()
+  ## 
+  lims.original = layer_scales(cur.panel)$x$range$range
+  
+  
+  
+  cur.lims = dat.lims |> filter(.data[[facet_by]] == cur.panel$data[[facet_by]][1])
+  ## update 
+  cur.panel$data = cur.panel$data |> filter(doy >= cur.lims$lower_doy, doy<= cur.lims$upper_doy)
+  
+  top_panel = cur.panel + 
+    labs(subtitle = paste0(cur.panel$labels$subtitle, "    |    ", cur.panel$labels$caption[1])) +
+    labs(caption = "")+
+    theme(plot.margin = margin(b = 0, unit = "pt"))
+  if(maintain_limits){top_panel = top_panel + xlim(lims.original)}
+  
+  ## lower_panel
+  dat.rugs = dat.orig |> 
+    group_by(.data[[facet_by]], doy) |> 
+    summarize(n = n(), .groups = "drop") |> 
+    ungroup()
+  
+  hist1 = dat.rugs |> 
+    filter(.data[[facet_by]] == cur.panel$data[[facet_by]][1]) |> 
+    ggplot(aes(x = doy, y = n))+
+    scale_y_continuous(n.breaks = 2)+
+    xlim(layer_scales(cur.panel)$x$range$range)+
+    geom_col(na.rm = TRUE)
+  if(maintain_limits){hist1 = hist1 + xlim(lims.original)}
+  
+  lower_panel = hist1 + theme(plot.margin = margin(t = -5, unit = "pt"))
+  
+  
+  top_panel / 
+    lower_panel + 
+    plot_layout(heights = c(10,1), axis_title = "collect", axes = "collect_x")
+}
+
+draw_augmented_doy = function(object, 
+                              maintain_limits = FALSE,
+                              ...){ ## additional gratia terms. Note that rug is replaced here
+  orig = gratia::draw(object, rug = FALSE, ...)
+  for(i in 1:length(orig)){
+    orig[[i]] = augment_drawn_doy_panel(orig[[i]], dat.orig = object$model, maintain_limits = maintain_limits)
+  } 
+  return(orig)
+}
+```
+
+```{r}
+## compare QQ plots of different models
+compare_qqs = function(model_list, method = "simulate"){
+  plot_list = list()
+  for(i in 1:length(model_list)){
+    plot_list[[i]] = qq_plot(model_list[[i]],
+                             method = method) +
+      ggtitle(paste0(names(model_list)[[i]], " | QQ plot of residuals"))
+  }
+  wrap_plots(plot_list)
+}
+```
+
+```{r}
+## Run dispersion test on DHARMa object
+get_dispersion = function(resObj){
+  temp = testDispersion(resObj, plot = F)
+  return(data.frame(
+    dispersion = temp$statistic[[1]],
+    p_value = temp$p.value,
+    alternative_hypothesis = temp$alternative
+  )
+  )
+}
+## Run zero-inflation test on DHARMa object
+get_zinf = function(resObj){
+  temp = testZeroInflation(resObj, plot = F)
+  return(data.frame(
+    ratio_obs_sim = temp$statistic[[1]],
+    p_value = temp$p.value,
+    alternative_hypothesis = temp$alternative
+  )
+  )
+}
+
+## Run outlier test on DHARMa object
+get_outliers = function(resObj, type = "binomial"){
+  temp = testOutliers(resObj, plot = F, type = type)
+  val_expected = names(temp$estimate)
+  val_expected = gsub(".*expected: ", "", val_expected)
+  val_expected = gsub(" )", "", val_expected)
+  val_expected = as.numeric(val_expected)
+  return(data.frame(
+    outlier_at_both_margins = temp$statistic[[1]],
+    p_value = temp$p.value,
+    observed_freq = temp$estimate[[1]],
+    expected_freq = val_expected,
+    confint_lower = temp$conf.int[[1]],
+    confint_upper = temp$conf.int[[2]],
+    alternative_hypothesis = temp$alternative
+  )
+  )
+}
+
+get_ks = function(resObj){
+  temp = testUniformity(resObj, plot = F)
+  return(data.frame(
+    D = temp$statistic[[1]],
+    p_value = temp$p.value
+  )
+  )
+}
+
+
+## streamlines carrying out multiple DHARMa-based tests.
+dharmify_models = function(model_list, do.outliers = FALSE){
+  list.dispersion = list()
+  list.zinf = list()
+  list.outliers = list()
+  list.ks = list()
+  for(i in 1:length(model_list)){
+    residSims = simulateResiduals(model_list[[i]])
+    list.dispersion[[i]] = get_dispersion(residSims)
+    list.zinf[[i]] = get_zinf(residSims)
+    if(do.outliers){
+      list.outliers[[i]] = get_outliers(residSims)
+    }
+    list.ks[[i]] = get_ks(residSims)
+  }
+  dispersion.df = do.call(rbind, list.dispersion)
+  dispersion.df$model = names(model_list)
+  
+  zinf.df = do.call(rbind, list.zinf)
+  zinf.df$model = names(model_list)
+  
+  outliers.df = do.call(rbind, list.outliers)
+  outliers.df$model = names(model_list)
+  
+  ks.df = do.call(rbind, list.ks)
+  ks.df$model = names(model_list)
+  
+  res = list(dispersion = dispersion.df,
+             zinf = zinf.df,
+             ks = ks.df)
+  if(do.outliers){
+    res$outliers = outliers.df
+  }
+  
+  return(res)
+}
+
+```
+
+```{r}
+## Converting day of year to "Month Day" format for plotting
+doy_2md=function(i){
+  ymd=as.Date(i-1, origin="2019-01-01")
+  return(format(ymd, "%b %d"))
+}
+
+facet_names <- c(`FALSE` = "Reported no kept fish",
+                 `TRUE` = "Reported 1+ kept fish")
+
+```
+
+### Reading in the data
+
+```{r}
+dummy_dt = ymd_hms("2025-01-01 00:00:00") ## dummy date-time for handling dates in the data
+
+## rerun the following to recreate the clean data
+if(FALSE){
+  source(here("scripts/prepare_creel_data.R"))
+}
+
+raw = read_csv(here("cleaned_data/key_dataframes/creel_interview_catch_withzeros.csv")) 
+
+dat = raw |> 
+  filter(species == "Chinook") 
+
+
+dat |> 
+  summarize(count = sum(fish_count),
+            .by = c(year, species, life_stage, fin_mark, fate)) |> 
+  arrange(year, species, life_stage, fin_mark, fate) |> 
+  gt()
+
+
+## Aggregate fish caught to survey level, calculate some survey metrics
+dat.sum = dat |> 
+  filter(fin_mark %in% c("UM", "AD")) |> 
+  group_by(interview_id, event_date, year, month,
+           fishing_duration_minutes, angler_count, angler_minutes,
+           trip_status, boat_used, trip_guided, 
+           boat_type, fishing_start_time, fishing_end_time) |> 
+  summarize(um_adult = sum(fish_count[fin_mark == "UM" & life_stage == "Adult"]),
+            ad_adult = sum(fish_count[fin_mark == "AD" & life_stage == "Adult"]),
+            released_adult = sum(fish_count[fate == "Released" & life_stage == "Adult"]),
+            kept_adult = sum(fish_count[fate == "Kept" & life_stage == "Adult"]),
+            um_jack = sum(fish_count[fin_mark == "UM" & life_stage == "Jack"]),
+            ad_jack = sum(fish_count[fin_mark == "AD" & life_stage == "Jack"]),
+            released_jack = sum(fish_count[fate == "Released" & life_stage == "Jack"]),
+            kept_jack = sum(fish_count[fate == "Kept" & life_stage == "Jack"])
+  ) |> 
+  ungroup() |> 
+  mutate(um_total = um_jack + um_adult,
+         ad_total = ad_jack + ad_adult,
+         released_total = released_adult + released_jack,
+         kept_total = kept_adult + kept_jack,
+         had.ad = ad_total > 0,
+         had.um = um_total > 0,
+         had.release = released_total > 0,
+         had.kept = kept_total > 0)
+
+
+dat.fit = 
+  dat |> 
+  filter(fin_mark %in% c("UM", "AD")) |> 
+  mutate(boat_used = as.factor(boat_used)) |> 
+  group_by(interview_id, life_stage, fin_mark, event_date, 
+           year, month, fishing_duration_minutes, 
+           angler_count, angler_minutes, trip_status, 
+           trip_guided, boat_type,
+           boat_used, fishing_start_time, fishing_end_time) |>   
+  summarize(fish_count = sum(fish_count)) |> 
+  ungroup() |>
+  ## need to collapse the data down a bit
+  left_join(dat.sum |> 
+              select(interview_id, had.ad, had.um, had.release, had.kept, um_total, ad_total),
+            by = "interview_id") |> 
+  mutate(doy = yday(event_date),
+         fin_mark = as.factor(fin_mark),
+         had.ad = as.factor(had.ad),
+         had.um = as.factor(had.um),
+         had.release = as.factor(had.release),
+         had.kept = as.factor(had.kept),
+         yearfac = as.factor(year)) |> 
+  filter(!is.na(fishing_duration_minutes)) |> 
+  mutate(round_cat1 = case_when(
+    fish_count >= 3 & fish_count <= 7 ~ "3-7",
+    fish_count >= 8 & fish_count <= 12 ~ "8-12",
+    fish_count >= 13 ~ "13+",
+  )) |> 
+  mutate(round_cat1 = factor(round_cat1, levels = c("3-7", "8-12", "13+"))) |> 
+  mutate(round_cat2 = case_when(
+    fish_count >= 3 & fish_count <= 7 ~ "3-7",
+    fish_count >= 8 ~ "8+"
+  )) |> 
+  mutate(round_cat2 = factor(round_cat2, levels = c("3-7", "8+"))) |> 
+  mutate(interview_id_fac = as.factor(interview_id)) |> 
+  mutate(mark_stage = as.factor(paste0(fin_mark, " X ", life_stage))) |> 
+  mutate(fishing_diff = fishing_end_time-fishing_start_time,
+         fishing_start_dt = dummy_dt + fishing_start_time,
+         fishing_end_dt =  dummy_dt + fishing_end_time,
+         fishing_med_dt = fishing_start_dt + fishing_diff/2,
+         fishing_med_time = as_hms(fishing_med_dt),
+         fishing_med_hrs = hour(fishing_med_time) + minute(fishing_med_time)/60,
+         fishing_start_hrs = hour(as_hms(fishing_start_dt)) + minute(as_hms(fishing_start_dt))/60) |> 
+  select(-fishing_diff, -fishing_start_dt, -fishing_end_dt,
+         -fishing_med_dt, -fishing_med_time)
+
+## Save these data files for easy review
+## 
+write_csv(dat.sum, here("cleaned_data/dat-sum.csv"))
+write_csv(dat.fit, here("cleaned_data/dat-fit.csv"))
+
+
+
+dat.fit |> 
+  summarize(count = sum(fish_count),
+            .by = c(year, life_stage, fin_mark)) |> 
+  arrange(year, life_stage, fin_mark) |> 
+  gt()
+
+dat.sum |> 
+  summarize(total_ad = sum(ad_total),
+            total_um = sum(um_total),
+            .by = c(year)) |> 
+  arrange(year) |> 
+  gt()
+```
+
+Note that we're skipping the \~500 (out of \~65,000) observations with no fishing time. These are entirely from incomplete trips in 2021, which can't be compared apples-to-apples with completed trips anyways.
+
+::::: panel-tabset
+## Looking at the data
+
+Before constructing and comparing models, we summarize some basic aspects of the data.
+
+::: panel-tabset
+The number of fish caught should vary based on time of year and time spent fishing, but we can still start with some basic summaries of the number of interviews with different numbers of reported unmarked fish.
+
+```{r}
+dat.sum |> 
+  count(um_total) |> 
+  rename(unmarked_encounters = um_total,
+         interviews = n) |> 
+  gt()
+```
+
+What proportion of anglers had total catches of 0, 1, etc?
+
+```{r}
+dat.sum |> 
+  mutate(total_total = um_total + ad_total) |> 
+  count(total_total) |> 
+  filter(total_total>0) |> 
+  mutate(proportion = n/sum(n)) |> 
+  gt()
+```
+
+We can look at the breakdown of angler minutes per trip to see if the trips with the highest UM encounters were unusual. Adding jitter to Y axis but not X axis.
+
+```{r}
+ggplot(dat.sum, aes(x = angler_minutes, y = um_total))+
+  geom_jitter(width = 0, height = 0.2)+
+  theme_bw()+
+  labs(x = "angler minutes (duration x # of anglers)", y = "Unmarked encounters",
+       title = "Unmarked encounters by fishing time")
+```
+
+It can be hard to see what the average minutes per catch look like, so here they are in table form
+
+```{r}
+dat.sum |> 
+  group_by(um_total) |> 
+  summarize(n = n(),
+            mean_angler_minutes = mean(angler_minutes, na.rm = T)) |> 
+  rename(unmarked_encounters = um_total,
+         interviews = n) |> 
+  gt()
+```
+
+It's also relevant to look at what time of year this occurred in.
+
+```{r}
+dat.sum |> 
+  mutate(doy = yday(event_date)) |> 
+  ggplot(aes(x = doy, y = um_total, col = um_total==10))+
+  geom_jitter(width = 0, height = 0.2)+theme_bw()+
+  labs(y = "Unmarked encounters",
+       title = "Unmarked encounters by season")+
+  scale_x_continuous(labels = doy_2md)
+```
+
+### Minutes per catch
+
+We can look at how realistic some of this data is by calculating the average angler minutes per catch, and see if some of the observations are not realistic. Trips with no catch will be treated as NAs for this calculation.
+
+```{r}
+dat.sum = dat.sum |> 
+  mutate(catch_per_hour = (um_total + ad_total)/angler_minutes * 60,
+         catch_per_hour_um = um_total/angler_minutes * 60,
+         catch_per_hour_ad = ad_total/angler_minutes * 60,
+         minutes_per_catch = angler_minutes / (um_total + ad_total),
+         minutes_per_catch = if_else(is.infinite(minutes_per_catch),
+                                     NA,
+                                     minutes_per_catch))
+
+hist(dat.sum$minutes_per_catch, breaks = 500)
+
+hist(dat.sum$minutes_per_catch, breaks = 100, xlim = c(0, 500))
+```
+
+Let's look at the top 20 fastest catching surveys. Here I'll highlight any trip that reported at least 5 unmarked encounters. The formatting is a little funky, as we'll include several non-exclusive categories of fish. The "released_total" and "kept_total" columns represent the total numbers of fish that were kept and released; the "um_total" and "released_jack" effectively act as breakdowns of the likely sources of "released_total" (although "released_total" can also include released AD adults, so the numbers may or may not always match). The "minutes_per_catch" column shows the total angler time (# anglers x duration of trip) divided by the total number of fish (released_total+kept_total).
+
+```{r}
+dat.sum |> 
+  arrange((minutes_per_catch)) |> 
+  select(minutes_per_catch, released_total, um_total, released_jack, kept_total, fishing_duration_minutes , angler_count, boat_used, event_date, fishing_start_time, fishing_end_time) |> 
+  head(20) |> 
+  gt() |> 
+  gt_highlight_rows(rows = released_total >= 5)
+
+```
+
+We have an impossible data point with identical start and end time. We also have some other trips that seem unreasonably efficicient, most obviously the trip in which two anglers on a boat for 60 minutes caught 9 fish between them. While not the focus of this document, we should consider developing efficiency-based threshold for flagging potentially problematic reports.
+
+We can also look at catch per hour across each year. This begins to resemble our more formal modeling.
+
+```{r}
+dat.plot = dat.sum |> 
+  mutate(doy = yday(event_date))
+
+dat.plot |> 
+  ggplot(aes(x = doy, y = catch_per_hour))+
+  geom_jitter(width = 0.2, height = 0)+
+  # geom_text(data = dat.plot |> filter((catch_per_hour) > 1.3),
+  #           aes(y = catch_per_hour, x = doy, label = um_total),
+  #           col = 'blue', nudge_x = 1, nudge_y = -.08)+
+  facet_wrap(.~ year, ncol = 1)+ 
+  scale_x_continuous(labels = doy_2md)+
+  labs(x = "", y = "Chinook caught per hour")+
+  labs(title = "Chinook catch per hour")+
+  theme_bw()
+
+
+dat.plot |> 
+  ggplot(aes(x = doy, y = catch_per_hour, col = as.factor(year)))+
+  geom_jitter(width = 0.2, height = 0)+
+  labs(x = "", y = "Chinook caught per hour")+
+  scale_x_continuous(labels = doy_2md)+
+  labs(title = "Chinook catch per hour",
+       subtitle = "date jittered +/- 5 hours very slightly for readability")+
+  theme_bw()
+
+dat.plot |> 
+  ggplot(aes(x = doy, y = catch_per_hour, col = as.factor(year)))+
+  geom_smooth()+
+  labs(x = "", y = "Chinook caught per hour")+
+  scale_x_continuous(labels = doy_2md)+
+  labs(title = "Average Chinook catch per hour")+
+  theme_bw()
+
+
+```
+
+### Catch by duration
+
+Does the length of a fishing trip relate to the total number of encounters?
+
+```{r}
+dat.sum |> 
+  mutate(total_encounters = um_total+ad_total) |> 
+  ggplot(aes(x = angler_minutes, y = total_encounters, col = boat_used))+
+  geom_point()+
+  geom_smooth()+
+  facet_wrap(.~ boat_used)+
+  labs(title = "Encounters by time angling facetd by boat use")
+
+```
+
+### Catch by start time
+
+Does our catch rate vary by the start time of the fishing trip?
+
+```{r}
+dat.sum |>
+  mutate(total_encounters = um_total+ad_total) |> 
+  ggplot(aes(x = fishing_start_time, y = catch_per_hour, col = boat_used))+
+  geom_point()+
+  geom_smooth()+
+  facet_wrap(.~ boat_used)+
+  labs(y = "catch per hour",
+       title = "catch rate as a function of start time",
+       subtitle = "facted by boat use")+
+  theme_bw()
+```
+
+### AD catch by boat_used
+
+Do we see anything concerning in the AD catch for boat vs bank anglers?
+
+```{r}
+dat.fit |> filter(life_stage == "Adult", fin_mark == "AD") |> 
+  count(ad_total, boat_used) |> pivot_wider(names_from = boat_used, values_from = n) |> 
+  gt() |> 
+  tab_caption("# of surveys by marked encounters, split by boat_used")
+
+```
+
+### Catch by time of day
+
+Do we see a signal of first bite? In looking over these plots, there is a complicating factor: anglers are likely to end their trip when they hit their limit, so anglers with high catch rates should generally appear in the data earlier in the day, on average.
+
+```{r}
+## add fishing duration as an interval
+##note: interval needs the time to be attached to a date. We don't care about the specific dat.
+dummy_dt = ymd_hms("2025-01-01 00:00:00")
+dat.sum <- dat.sum |> 
+  mutate(fishing_start_dt = dummy_dt + fishing_start_time,
+         fishing_end_dt =  dummy_dt + fishing_end_time,
+         fishing_interval = interval(fishing_start_dt,
+                                     fishing_end_dt)) |> 
+  mutate(rownum = 1:nrow(dat.sum))
+## create times to test. doing on the 15 and 45 minutes because reporting is often on
+## the 30 min intervals
+times_test = expand_grid(hour = 1:23,
+                         sep1 = ":", 
+                         minutes = c(15, 45), 
+                         sep2 = ":00" )
+temp = NULL
+for(i in 1:nrow(times_test)){
+  temp = rbind(temp, 
+               paste0(times_test[i,], collapse = ""))
+}
+times_test = lubridate::hms(as.character(temp))
+
+mean_efficiency_df = data.frame(times = ymd("2025-01-01")+times_test) |> 
+  mutate(mean_catch_per_hour = -99,
+         n = -99)
+for(i in 1:nrow(mean_efficiency_df)){
+  dat.cur = dat.sum |> 
+    filter(mean_efficiency_df$times[i] %within% fishing_interval)
+  mean_efficiency_df$n[i] = nrow(dat.cur)
+  if(nrow(dat.cur)==0){
+    mean_efficiency_df$mean_catch_per_hour[i] = NA
+  } else {
+    mean_efficiency_df$mean_catch_per_hour[i] = mean(dat.cur$catch_per_hour)
+  }
+}
+
+time_labeler = function(x){
+  strftime(x, format = "%H:%M")
+}
+
+ggplot(mean_efficiency_df |> 
+         filter(n>=10),
+       aes(x = times, y = mean_catch_per_hour))+
+  geom_path()+
+  labs(title = "Average Nisqually catch efficiency by time of day",
+       subtitle = "averaged every 30 min across all intervals spanning that time\nskipping times with <5 samples",
+       y = "catch per hour")+
+  scale_x_datetime(date_labels = "%H:%M")
+
+ggplot(dat.sum,
+       aes(y = rownum, x = fishing_start_dt,
+           xend = fishing_end_dt,
+           col = catch_per_hour))+
+  geom_segment()+
+  ggtitle("All fishing intervals coverage")
+
+ggplot(mean_efficiency_df,
+       aes(x = times, y = n))+
+  geom_path()+
+  ggtitle("Fishing interval coverage")
+
+
+
+```
+
+Now separate by bank vs boat
+
+```{r}
+dummy_dt = ymd_hms("2025-01-01 00:00:00")
+dat.sum <- dat.sum |> 
+  mutate(fishing_start_dt = dummy_dt + fishing_start_time,
+         fishing_end_dt =  dummy_dt + fishing_end_time,
+         fishing_interval = interval(fishing_start_dt,
+                                     fishing_end_dt)) |> 
+  mutate(rownum = 1:nrow(dat.sum))
+## create times to test. doing on the 15 and 45 minutes because reporting is often on
+## the 30 min intervals
+times_test = expand_grid(hour = 1:23,
+                         sep1 = ":", 
+                         minutes = c(15, 45), 
+                         sep2 = ":00" )
+temp = NULL
+for(i in 1:nrow(times_test)){
+  temp = rbind(temp, 
+               paste0(times_test[i,], collapse = ""))
+}
+times_test = lubridate::hms(as.character(temp))
+
+mean_efficiency_df = expand_grid(times = ymd("2025-01-01")+times_test,
+                                 boat_used = c("Yes", "No")) |> 
+  mutate(mean_catch_per_hour = -99,
+         n = -99)
+for(i in 1:nrow(mean_efficiency_df)){
+  dat.cur = dat.sum |> 
+    filter(mean_efficiency_df$times[i] %within% fishing_interval) |> 
+    filter(boat_used == mean_efficiency_df$boat_used[i])
+  mean_efficiency_df$n[i] = nrow(dat.cur)
+  if(nrow(dat.cur)==0){
+    mean_efficiency_df$mean_catch_per_hour[i] = NA
+  } else {
+    mean_efficiency_df$mean_catch_per_hour[i] = mean(dat.cur$catch_per_hour)
+  }
+}
+
+time_labeler = function(x){
+  strftime(x, format = "%H:%M")
+}
+
+ggplot(mean_efficiency_df |> 
+         filter(n>=10),
+       aes(x = times, y = mean_catch_per_hour))+
+  geom_path()+
+  facet_wrap(.~boat_used)+
+  labs(title = "Average Nisqually catch efficiency by time of day by boat used",
+       subtitle = "averaged every 30 min across all intervals spanning that time\nskipping times with <5 samples",
+       y = "catch per hour")+
+  scale_x_datetime(date_labels = "%H:%M")
+```
+
+Now separate by UM vs AD as well
+
+```{r}
+
+dummy_dt = ymd_hms("2025-01-01 00:00:00")
+dat.sum <- dat.sum |> 
+  mutate(fishing_start_dt = dummy_dt + fishing_start_time,
+         fishing_end_dt =  dummy_dt + fishing_end_time,
+         fishing_interval = interval(fishing_start_dt,
+                                     fishing_end_dt)) |> 
+  mutate(rownum = 1:nrow(dat.sum))
+## create times to test. doing on the 15 and 45 minutes because reporting is often on
+## the 30 min intervals
+times_test = expand_grid(hour = 1:23,
+                         sep1 = ":", 
+                         minutes = c(15, 45), 
+                         sep2 = ":00" )
+temp = NULL
+for(i in 1:nrow(times_test)){
+  temp = rbind(temp, 
+               paste0(times_test[i,], collapse = ""))
+}
+times_test = lubridate::hms(as.character(temp))
+
+mean_efficiency_df_um = expand_grid(times = ymd("2025-01-01")+times_test,
+                                    boat_used = c("Yes", "No")) |> 
+  mutate(mean_catch_per_hour = -99,
+         n = -99,
+         type = "UM")
+mean_efficiency_df_ad = expand_grid(times = ymd("2025-01-01")+times_test,
+                                    boat_used = c("Yes", "No")) |> 
+  mutate(mean_catch_per_hour = -99,
+         n = -99,
+         type = "AD")
+for(i in 1:nrow(mean_efficiency_df_um)){
+  dat.cur = dat.sum |> 
+    filter(mean_efficiency_df$times[i] %within% fishing_interval) |> 
+    filter(boat_used == mean_efficiency_df$boat_used[i])
+  mean_efficiency_df_um$n[i] = nrow(dat.cur)
+  mean_efficiency_df_ad$n[i] = nrow(dat.cur)
+  if(nrow(dat.cur)==0){
+    mean_efficiency_df_um$mean_catch_per_hour[i] = NA
+    mean_efficiency_df_ad$mean_catch_per_hour[i] = NA
+  } else {
+    mean_efficiency_df_um$mean_catch_per_hour[i] = mean(dat.cur$catch_per_hour_um)
+    mean_efficiency_df_ad$mean_catch_per_hour[i] = mean(dat.cur$catch_per_hour_ad)
+  }
+}
+
+time_labeler = function(x){
+  strftime(x, format = "%H:%M")
+}
+
+mean_efficiency_df = bind_rows(mean_efficiency_df_um, mean_efficiency_df_ad)
+
+facet_names_boat <- c(`No` = "Bank", `Yes` = "Boat")
+
+ggplot(mean_efficiency_df |> filter(n >= 10),
+       aes(x = times, y = mean_catch_per_hour)) +
+  geom_path() +
+  facet_grid(cols = vars(boat_used), rows = vars(type),
+             labeller = labeller(boat_used = facet_names_boat)) +
+  labs(title = "Average Nisqually catch efficiency by time of day by boat used",
+       subtitle = "averaged every 30 min across all intervals spanning that time\nskipping times with <10 samples",
+       y = "encounters per hour",
+       x = "time of day") +
+  scale_x_datetime(date_labels = "%H:%M")
+
+
+mean_efficiency_df_um |> 
+  rename(mean_catch_per_hour_um = mean_catch_per_hour) |> 
+  left_join(mean_efficiency_df_ad |> rename(mean_catch_per_hour_ad = mean_catch_per_hour),
+            by = c("times", "boat_used", "n")) |> 
+  mutate(expected_markrate = mean_catch_per_hour_ad/(mean_catch_per_hour_ad + mean_catch_per_hour_um)) |>
+  filter(times >= ymd("2025-01-01")+lubridate::hms("5:30:00"),
+         times <= ymd("2025-01-01")+lubridate::hms("18:30:00")) |> 
+  ggplot(aes(x = times, y = expected_markrate))+
+  geom_smooth()+
+  geom_point()+
+  facet_wrap(.~ boat_used,
+             labeller = labeller(boat_used = facet_names_boat)) +
+  labs(title = "Expected mark rate based on catch efficiencies of UM and AD",
+       subtitle = "averaged every 30 min across all intervals spanning that time\nskipping times with <10 samples",
+       y = "Mark rate") +
+  scale_x_datetime(date_labels = "%H:%M")
+
+```
+
+Interestingly, we see much less signal of a "first bite" effect for unmarked fish than for marked fish. The most obvious cause of this is that UM fish don't count to hitting bag limit, so trips that catch AD fish quickly should end early, while trips that catch UM fish quickly shouldn't have their trip length affected.
+
+:::
+
+## Model fitting
+
+As described above, as a baseline we start with a generalized additive model (smoothing spline) with a negative binomial error distribution and generic smooth options. We construct altenrative model structures representing the different options we have for each of our choices described above, and we compare those model fits to see which choice gives us the best model.
+
+We initially tried fitting models that included both fin mark and Jack vs adult, but we found that we did not have enough unmarked Jacks to fit a model unless we threw out all the other components that we thought might matter.
+
+```{r}
+#| tbl-cap: Number of fish caught in each mark x stage category.
+dat.fit |> 
+  group_by(mark_stage) |> 
+  summarize(sum(fish_count)) |> 
+  gt()
+
+dat.fit = dat.fit |> 
+  filter(life_stage != "Jack")
+```
+
+For this reason, we cannot choose models that include a separate smooth across doy for each mark status x life stage. We tried a compromise approach that used categories of "AD Adult", "UM Adult", and "Jack" (lumping together AD and UM jack), but this still led to model-fitting problems while also being biologically dissatisfying. Why should fin mark matter for adults but not jacks? Ultimately we decided to develop a separate model of jack encounter rates (in a separate document), so that when we make the compromises to model complexity necessary to make fitting Jacks work, it doesn't limit our modeling of adult encounters.
+
+We also have several entries that have impossible legal starting times (e.g. 12:01 AM) and several entries with 0 angler minutes (so impossible catch rate values). We remove those here to make model fitting possible.
+
+```{r}
+dat.fit = dat.fit |> 
+  filter(angler_minutes > 0) |> 
+  filter(fishing_start_time > 3)
+```
+
+::: panel-tabset
+#### Model structure: predictors
+
+
+**consideration: non-interactive year and finmark - check specification**
+
+**Update text here**
+
+What terms should we include in our model, and should we allow our seasonality smooth to vary by those terms?
+
+First we start by testing the various potential predictors we considered, assuming our seasonality is held constant across day of year, with a moderate level of flexibility (`s(doy, k = 20)`). For now we will assume the most complex version of including effort (boat_used, angler minutes, and their interaction; `boat_used * angler_minutes`); we'll also assume a negative binomial error distribution (`family = "nb"`). As per the standard recommendations when using mgcv, we'll fit using Restricted Maximum Likelihood (`method = "REML"`) rather than the default generalized cross validation.
+
+-   `out.null`: no predictors beyond basic seasonality, an offset for effort, and fin mark.
+-   `out.fin`: null model plus fin mark as a predictor
+-   `out.year`: null model plus year mark as a predictor
+-   `out.finyear`: null model plus fin mark plus year as predictors
+-   `out.finxyear`: `out.finyear` but with a fin x year interaction
+
+We will focus on identifying if/how we should include effects of in and year before we evaluate the value of the start time of individual surveys; this choice keeps our analyses simpler and focuses on the most important factors first.
+
+```{r}
+out.fin = gam(fish_count ~ fin_mark + 
+                s(doy, k = 20),
+              offset = log(angler_minutes/60),
+              method = "REML",
+              family = "nb",
+              data = dat.fit)
+
+out.finyear = gam(fish_count ~ yearfac + fin_mark +
+                    s(doy, k = 20) ,
+                  offset = log(angler_minutes/60),
+                  method = "REML",
+                  family = "nb",
+                  data = dat.fit)
+
+out.finboat = gam(fish_count ~ fin_mark + boat_used +
+                    s(doy, k = 20),
+                  offset = log(angler_minutes/60),
+                  method = "REML",
+                  family = "nb",
+                  data = dat.fit)
+
+
+out.finyearboat = gam(fish_count ~ fin_mark + yearfac + boat_used +
+                        s(doy, k = 20),
+                      offset = log(angler_minutes/60),
+                      method = "REML",
+                      family = "nb",
+                      data = dat.fit)
+
+out.finxyearboat = gam(fish_count ~ yearfac * fin_mark + boat_used +
+                         s(doy, k = 20) ,
+                       offset = log(angler_minutes/60),
+                       method = "REML",
+                       family = "nb",
+                       data = dat.fit)
+```
+
+We can compare these models several ways. As an easy starting point, let's look at AIC. The best model has the lowest score. Typically we consider models within 2 AIC of each other as being indistinguishable using AIC, and models that differ by at least 6 AIC are often significantly different.
+
+```{r}
+AICtab(out.fin, out.finyear, out.finboat, out.finyearboat, out.finxyearboat,
+       base = TRUE, sort = FALSE) |> 
+  as.data.frame() |> 
+  rownames_to_column("model") |> 
+  gt()
+```
+
+STRONG support for including year and boat use; their interaction may or may not be worth including.
+
+Another way to evaluate these models is to compare model fit diagnostics. First we can look at the QQ plots. These are a fairly subjective / qualitative tool, but helpful nonetheless. We are *not* expecting these plots to look great in absolute terms yet (we still have some model options to look at), but we would be concerned if we made the plots substantially worse with our model choices.
+
+```{r}
+basics_list = list("fin only" = out.fin, 
+                   "fin + year" = out.finyear,
+                   "fin + boat use" = out.finboat, 
+                   "fin + year + boat use" = out.finyearboat,
+                   "fin X year + boat use" = out.finxyearboat
+)
+
+compare_qqs(basics_list)
+```
+
+This looks fine, but not great. We're seeing some signal of *something* happening for our data with the highest predicted counts -- the models are all underestimating those. It looks like we address some of that problem by including boat use
+
+What about some other diagnostics? The `DHARMa` package provides a series of simulation-based model diagnostics tests we can use. For these tests, a significant test result (P\<0.05) signifies a problem, while large P values signify no sign of a problem.
+
+```{r}
+#| tbl-cap: Dispersion tests
+dharm.stats = dharmify_models(basics_list)
+dharm.stats$dispersion |> 
+  gt()
+```
+
+We *are* seeing signs of what looks like underdispersion (?) for models that include boat use. This is worth digging into a bit.
+
+```{r}
+#| tbl-cap: Zero-inflation test
+dharm.stats$zinf |> 
+  gt()
+```
+
+```{r}
+#| tbl-cap: K-S test
+dharm.stats$ks |> 
+  gt()
+```
+
+
+```{r}
+sim = simulateResiduals(out.finyearboat, n = 1000)
+plot(sim)
+```
+
+
+It doesn't look like there are any red flags in terms of model diagnostics, either.
+
+Finally, how do our model predictions compare when we do / don't include the fin x year interaction? We'll just plot bank anglers to keep the plots simpler; boat anglers are most of the interviews.
+
+```{r}
+plot_seasonal_gam_panels(basics_list[[1]],
+                         quant_trimming = 0.05,
+                         verbose = FALSE
+) |> 
+  wrap_panels()
+
+plot_seasonal_gam_panels(basics_list[4:5],
+                         quant_trimming = 0.05,
+                         verbose = FALSE
+) |> 
+  filter(boat_used == "Yes") |> 
+  grid_panels(column_var = "fin_mark",
+              row_var = "yearfac",
+              scales_x = "fixed_all", 
+              scales_y = "fixed_all",
+              scales_y_coverage = "fixed_all")
+```
+
+This figure shows a grid of panels: we have two columns ("AD" and "UM") and three rows, one per year. Within each column and row combination we have two plots, one for each model. Under each primary plot is a small barplot of data coverage, to help identify periods in the season when we have limited data.
+
+We see a few things. First, our seasonality smooth is not allowed to vary by year or fin mark, so we see the same *shape* in each plot that uses the same model, it's just flattened or stretched out to account for different overall catch rates by fin mark and year. Second, we see very minimal differences in the shape of the predictions when we use the `fin + year` model or the `fin x year` model.
+
+Taken together, it looks like our best choice is to allow encounter rate to vary by fin mark and year, and we get approximately identical results if we include a fin mark x year interaction. That interaction term would represent the mark rate changing from one year to the next; since this is something we think is likely to be happening and it doesn't affect our model fit much to include it, **we tentatively choose to include it. We are happy to change this decision.**
+
+With our new best model in mind (`out.finxyear`), do we see improved performance by including the start time of fishing trips (`fishing_start_hrs`) as a predictor? That is, do we see a signal of first bite? While it seems unlikely, it's possible this affect might vary by year, so we can try that model. The first bite effect could also potentially vary by boat vs bank angling (if we see depletion across the day of fish in the areas that are easily accessed by bank), so we can try that model, with the caveat that we have limited boat angler data, and we may not want to include interactions with boat_used as this risks splitting our data too thin.
+
+-   `out.time`: `out.finxyear` plus an effect of the fishing start time (in hours)
+-   `out.timexyear`: `out.finxyear` plus an effect of fishing start time and a start time by year interaction.
+-   `out.timexboat`: `out.finxyear` plus an effect of fishing start time and a start time by boat_use interaction.
+
+```{r}
+out.time = gam(fish_count ~ yearfac * fin_mark + boat_used +
+                 fishing_start_hrs +
+                 s(doy, k = 20) ,
+               offset = log(angler_minutes/60),
+               method = "REML",
+               family = "nb",
+               data = dat.fit)
+
+out.timexyear = gam(fish_count ~ yearfac * fin_mark + boat_used +
+                      fishing_start_hrs + fishing_start_hrs:yearfac +
+                      s(doy, k = 20) ,
+                    offset = log(angler_minutes/60),
+                    method = "REML",
+                    family = "nb",
+                    data = dat.fit)
+
+out.timexboat = gam(fish_count ~ yearfac * fin_mark + boat_used +
+                      fishing_start_hrs + fishing_start_hrs:boat_used +
+                      s(doy, k = 20) ,
+                    offset = log(angler_minutes/60),
+                    method = "REML",
+                    family = "nb",
+                    data = dat.fit)
+
+out.timexboat_xyear = gam(fish_count ~ yearfac * fin_mark + boat_used +
+                            fishing_start_hrs + 
+                            fishing_start_hrs:boat_used +
+                            fishing_start_hrs:yearfac +
+                            s(doy, k = 20) ,
+                          offset = log(angler_minutes/60),
+                          method = "REML",
+                          family = "nb",
+                          data = dat.fit)
+```
+
+```{r}
+AICtab(out.finxyearboat, out.time, out.timexyear, out.timexboat, out.timexboat_xyear,
+       base = TRUE, sort = FALSE) |> 
+  as.data.frame() |> 
+  rownames_to_column("model") |> 
+  gt()
+```
+
+We *do* see an effect of the start time of a trip, with the best support for allowing the effect of that start time to vary by year, but not by boat. How do our diagnostics look?
+
+```{r}
+basics_list = list("no start time" = out.finxyearboat,
+                   "+ start time" = out.time,
+                   "+ start time, start x year" = out.timexyear,
+                   "+ start time, start x boat" = out.timexboat, 
+                   "+ start time, start x both" = out.timexboat_xyear
+)
+
+compare_qqs(basics_list)
+```
+
+Doesn't look terrible. How do our diagnostics tests look for the new models (reminder: `fin x year` had no warning flags in terms of diagnostics tests),
+
+```{r}
+#| tbl-cap: Dispersion tests
+dharm.stats = dharmify_models(basics_list[-1])
+dharm.stats$dispersion |> 
+  gt()
+```
+
+More dispersion issues.
+
+```{r}
+#| tbl-cap: Zero-inflation test
+dharm.stats$zinf |> 
+  gt()
+```
+
+```{r}
+#| tbl-cap: K-S test
+dharm.stats$ks |> 
+  gt()
+```
+
+
+What is the predicted effect of the start time? We an look at our estimated coefficient from `out.time` for the "fishing_start_hrs" term.
+
+```{r}
+fixef(out.time)["fishing_start_hrs"]
+```
+
+That number is difficult to interpret on its own, since we are working with a log link function. One tool is to look at how our predicted encounter rate would change if anglers delayed their fishing start by 1 hour.
+
+```{r}
+VizSeasonalGams::predict_gam(out.time) |>
+  mutate(prediction = as.numeric(log(prediction))) |> 
+  mutate(prediction_1hr_delay = prediction + fixef(out.time)["fishing_start_hrs"]) |> 
+  mutate(prediction = exp(prediction),
+         prediction_1hr_delay = exp(prediction_1hr_delay)) |> 
+  filter(boat_used == "No") |>
+  ggplot()+
+  geom_path(aes(x = doy, y = prediction, col = "Baseline"))+
+  geom_path(aes(x = doy, y = prediction_1hr_delay, col = "Start 1 hr later")) +
+  facet_wrap(.~ yearfac + fin_mark)
+# facet_grid(var(yearfac), var(fin_mark))
+
+```
+
+We can also look at the proportional change in encounter rate for that 1 hour delay. Conveniently, proportional change is the same regardless of the other predictor values
+
+```{r}
+VizSeasonalGams::predict_gam(out.time) |>
+  mutate(prediction = as.numeric(log(prediction))) |> 
+  mutate(prediction_1hr_delay = prediction + fixef(out.time)["fishing_start_hrs"]) |> 
+  mutate(prediction = exp(prediction),
+         prediction_1hr_delay = exp(prediction_1hr_delay),
+         prop_change = (prediction_1hr_delay - prediction)/prediction) |> 
+  summarize(mean_proportional_change = mean(prop_change),
+            min_proportional_change = min(prop_change),
+            max_proportional_change = max(prop_change),
+            .by = c("boat_used", "yearfac", "fin_mark")) |> 
+  gt()
+```
+
+We see about a 3% reduction in encounter rate for the average angler if they delay their start by an hour. 
+
+How big a deal is this effect? 1 hour doesn't look like much effect; let's use a model with a smooth
+across time (to allow nonlinearity), and let's allow that smooth to vary by bank vs angler (since we see
+an effect there). Using that model, how different is expected catch rate at 5:30 am vs at noon?
+
+```{r}
+out.test = gam(fish_count ~ yearfac * fin_mark + boat_used +
+                            s(fishing_start_hrs, by = boat_used)+
+                            s(doy, k = 20) ,
+                          offset = log(angler_minutes/60),
+                          method = "REML",
+                          family = "nb",
+                          data = dat.fit)
+
+dat.pred = create_prediction_df(out.test)
+dat.pred = dat.pred |> mutate(fishing_start_hrs = 5.5) |> 
+  bind_rows(dat.pred |> mutate(fishing_start_hrs = 12))
+
+dat.pred$prediction = predict(out.test, newdata = dat.pred, type = "response")
+
+dat.pred |> 
+  filter(boat_used == "No") |>
+  ggplot()+
+  geom_path(aes(x = doy, y = prediction, col = as.factor(fishing_start_hrs)))+
+  facet_wrap(.~ yearfac + fin_mark)+
+  scale_x_continuous(labels = doy_2md)+
+  labs(y = "Catch rate", 
+  title = "Bank anglers starting trips at 5:30 AM or Noon",
+  subtitle = "Smooth across start time by boat_used",
+  color = "Start time (hrs)")
+```
+
+
+Does the linear smooth give similar results?
+
+```{r}
+dat.pred = create_prediction_df(out.timexboat)
+dat.pred = dat.pred |> mutate(fishing_start_hrs = 5.5) |> 
+  bind_rows(dat.pred |> mutate(fishing_start_hrs = 12))
+
+dat.pred$prediction = predict(out.timexboat, newdata = dat.pred, type = "response")
+
+dat.pred |> 
+  filter(boat_used == "No") |>
+  ggplot()+
+  geom_path(aes(x = doy, y = prediction, col = as.factor(fishing_start_hrs)))+
+  facet_wrap(.~ yearfac + fin_mark)+
+  scale_x_continuous(labels = doy_2md)+
+  labs(y = "Catch rate", 
+  title = "Bank anglers starting trips at 5:30 AM or Noon",
+  subtitle = "Linear start x boat_used",
+  color = "Start time (hrs)")
+```
+
+Okay, and how much does year to year variation matter?
+
+```{r}
+out.test2 = gam(fish_count ~ yearfac * fin_mark +
+                            te(fishing_start_hrs, boat_used, yearfac, 
+                               bs = c('tp', 'fs', 'fs'))+
+                            s(doy, k = 20) ,
+                          offset = log(angler_minutes/60),
+                          method = "REML",
+                          family = "nb",
+                          data = dat.fit)
+
+dat.pred2 = create_prediction_df(out.test2)
+dat.pred2 = dat.pred |> mutate(fishing_start_hrs = 5.5) |> 
+  bind_rows(dat.pred |> mutate(fishing_start_hrs = 12))
+
+dat.pred2$prediction = predict(out.test2, newdata = dat.pred2, type = "response")
+dat.pred2 = dat.pred2 |> 
+  arrange(doy)
+
+dat.pred$scenario = "time x boat"
+dat.pred2$scenario = "time x boat x year"
+
+
+dat.pred2 |> 
+  # bind_rows(dat.pred) |>
+  arrange(doy) |> 
+  filter(boat_used == "No") |>
+  ggplot()+
+  geom_path(aes(x = doy, y = prediction, col = as.factor(fishing_start_hrs), linetype = scenario))+
+  facet_wrap(.~ yearfac + fin_mark, ncol = 2)+
+  scale_x_continuous(labels = doy_2md)+
+  labs(y = "Catch rate", 
+  title = "Does year-to-year variability matter?",
+  subtitle = "Linear start x boat_used x year",
+  color = "Start time (hrs)")
+```
+
+
+```{r}
+dat.pred3 = create_prediction_df(out.timexboat_xyear)
+dat.pred2 = dat.pred |> mutate(fishing_start_hrs = 5.5) |> 
+  bind_rows(dat.pred |> mutate(fishing_start_hrs = 12))
+
+dat.pred2$prediction = predict(out.timexboat_xyear, newdata = dat.pred2, type = "response")
+dat.pred2 = dat.pred2 |> 
+  arrange(doy)
+
+dat.pred$scenario = "time x boat"
+dat.pred2$scenario = "time x boat x year"
+
+
+dat.pred2 |> 
+  # bind_rows(dat.pred) |>
+  arrange(doy) |> 
+  filter(boat_used == "No") |>
+  ggplot()+
+  geom_path(aes(x = doy, y = prediction, col = as.factor(fishing_start_hrs), linetype = scenario))+
+  facet_wrap(.~ yearfac + fin_mark, ncol = 2)+
+  scale_x_continuous(labels = doy_2md)+
+  labs(y = "Catch rate", 
+  title = "Does year-to-year variability matter?",
+  subtitle = "Linear start x boat_used x year",
+  color = "Start time (hrs)")
+```
+
+
+**Dev notes: is there nonlinear pattern going on with start time?**
+
+```{r}
+out = gam(fish_count ~ yearfac * fin_mark + boat_used +
+                 s(fishing_start_hrs) +
+                 s(doy, k = 20) ,
+               offset = log(angler_minutes/60),
+               method = "REML",
+               family = "nb",
+               data = dat.fit)
+
+draw(out, rug = FALSE)
+```
+
+```{r}
+out2 = gam(fish_count ~ yearfac * fin_mark + boat_used +
+                 te(fishing_start_hrs, doy),
+               offset = log(angler_minutes/60),
+               method = "REML",
+               family = "nb",
+               data = dat.fit)
+
+draw(out2, rug = FALSE)
+
+out3 = gam(fish_count ~ yearfac * fin_mark + boat_used +
+                 s(fishing_start_hrs, by = boat_used) +
+                 s(doy, k = 20),
+               offset = log(angler_minutes/60),
+               method = "REML",
+               family = "nb",
+               data = dat.fit)
+
+draw(out3, rug = TRUE)
+
+
+out4 = gam(fish_count ~ yearfac * fin_mark + boat_used +
+                 s(fishing_start_hrs, by = yearfac) +
+                 s(doy, k = 20),
+               offset = log(angler_minutes/60),
+               method = "REML",
+               family = "nb",
+               data = dat.fit)
+
+draw(out4, rug = TRUE)
+
+AIC(out, out2, out3, out4)
+```
+
+
+I have some concerns about the primacy of the time + year x time model: what is the biological mechanism that would cause the first bite (or other within-day temporal effects) to vary between years? As a first pass at a sanity check, we can look how the estimated effect of time varies between years:
+
+```{r}
+temp = fixef(out.timexyear)
+temp[grep("fishing_start_hrs", names(temp))]
+```
+
+As with many models, gams wrap one level of an interaction into the baseline terms, and the other interaction terms add on to that. So `fishing_start_hrs` is the effect on catch of each additional hour of start time in 2021, the equivalent effect in 2022 is `fishing_start_hrs` plus `yearfac2022:fishing_start_hrs`, and the equivalent effect in 2023 is `fishing_start_hrs` plus `yearfac2023:fishing_start_hrs`. In other words, values of -0.05, -0.133, -0.093 in 2021, 2022, and 2023 respectively. All negative (good), varying a decent amount. So maybe this is real?
+
+Some putative explanations: (a) if the within-day temporal effect is the depletion of fish from the river across the day, years with higher total abundance might see less of this temporal effect, (b) if fishing seasons were at slightly different times of year between years and if the underlying driver is actually the time since dawn, since the time of dawn changes across the year this might show up as a time x year effect, (c) some years might have more anglers overall.
+
+Ultimately it seems clear that including start time as a predictor is valuable, and **I would appreciate discussion / suggestions / guidance on the inclusion of a start time x year interaction**. This feels like the reverse of our year x fin_mark decision above: the statistics support the inclusion of a term that has limited biological interpretation.
+
+Ty spitballing: maybe tide related? Differences in sampled angler gear between years? Maybe reduced fishing in 2021 because of covid? Probably a deep rabbithole here to get lost in. or could be something about survey design. Or location. First bite effect could be mostly apparent with egg use and not snagging, so differences in egg use sampled would affect apparent first bite effects.
+
+#### Model structure: form of smooth
+
+We've identified important predictors of catch rate:
+
+```{r}
+out.doy = gam(fish_count ~ yearfac*fin_mark + 
+                s(doy, k = 20) + 
+                boat_used * angler_minutes,
+              method = "REML",
+              family = "nb",
+              data = dat.fit |> 
+                filter(mark_stage!= "Jack"))
+```
+
+```{r}
+out.doy = gam(fish_count ~ yearfac*fin_mark + 
+                s(doy, k = 20) + 
+                boat_used * angler_minutes,
+              method = "REML",
+              family = "nb",
+              data = dat.fit |> 
+                filter(mark_stage!= "Jack"))
+
+out.doy |> 
+  plot_seasonal_gam_panels() |> 
+  filter(boat_used == "No") |> 
+  # wrap_panels()
+  grid_panels(column_var = "fin_mark",
+              row_var = "yearfac",
+              scales_x = "fixed_all",
+              scales_y = "fixed_column",
+              scales_y_coverage = "fixed_all"
+  )
+
+out.doy_yearfac = gam(fish_count ~ fin_mark + fin_mark:yearfac + 
+                        te(doy, yearfac, bs = c("tp", "fs"), k = c(20, 3)) + 
+                        boat_used*angler_minutes,
+                      method = "REML",
+                      family = "nb",
+                      data = dat.fit |> 
+                        filter(mark_stage!= "Jack"))
+
+out.doy_yearfac |> 
+  plot_seasonal_gam_panels() |> 
+  filter(boat_used == "No") |> 
+  # wrap_panels()
+  grid_panels(column_var = "fin_mark",
+              row_var = "yearfac",
+              scales_x = "fixed_all",
+              scales_y = "fixed_all",
+              scales_y_coverage = "fixed_all"
+  )
+
+
+out.doy_finmark = gam(fish_count ~ yearfac + fin_mark:yearfac + 
+                        te(doy, fin_mark, bs = c("tp", "fs"), k = c(20, 3)) + 
+                        boat_used*angler_minutes,
+                      method = "REML",
+                      family = "nb",
+                      data = dat.fit |> 
+                        filter(mark_stage!= "Jack"))
+
+out.doy_finmark |> 
+  plot_seasonal_gam_panels() |> 
+  filter(boat_used == "No") |> 
+  # wrap_panels()
+  grid_panels(column_var = "fin_mark",
+              row_var = "yearfac",
+              scales_x = "fixed_all",
+              scales_y = "fixed_all",
+              scales_y_coverage = "fixed_all"
+  )
+
+out.all = gam(fish_count ~ te(doy, fin_mark, yearfac, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) + 
+                boat_used*angler_minutes,
+              method = "REML",
+              family = "nb",
+              data = dat.fit |> 
+                filter(mark_stage!= "Jack"))
+
+out.all |> 
+  plot_seasonal_gam_panels() |> 
+  filter(boat_used == "No") |> 
+  # wrap_panels()
+  grid_panels(column_var = "fin_mark",
+              row_var = "yearfac",
+              scales_x = "fixed_all",
+              scales_y = "fixed_all",
+              scales_y_coverage = "fixed_all"
+  )
+
+AIC(out.doy, 
+    out.doy_yearfac,
+    out.doy_finmark,
+    out.all)
+
+smoothby_list = list(
+  "basic" = out.doy,
+  "by year" = out.doy_yearfac,
+  "by fin mark" = out.doy_finmark,
+  "by year x fin" = out.all
+)
+
+compare_qqs(smoothby_list)
+
+plot_seasonal_gam_panels(smoothby_list,
+                         quant_trimming = 0.05) |> 
+  filter(boat_used == "No") |> 
+  # wrap_panels()
+  grid_panels(column_var = "fin_mark",
+              row_var = "yearfac",
+              scales_x = "fixed_all",
+              scales_y = "fixed_column",
+              scales_y_coverage = "fixed_all"
+  )
+
+
+plot_seasonal_gam_panels(smoothby_list[c("basic", "by year x fin")],
+                         quant_trimming = 0.05) |> 
+  filter(boat_used == "No") |> 
+  # wrap_panels()
+  grid_panels(column_var = "fin_mark",
+              row_var = "yearfac",
+              scales_x = "fixed_all",
+              scales_y = "fixed_column",
+              scales_y_coverage = "fixed_all"
+  )
+
+```
+
+It looks like our best model allows seasonality to differ between years but not fin marks.
+
+```{r}
+dharm.out = simulateResiduals(smoothby_list$`by year`)
+plot(dharm.out)
+
+dharm.stats = dharmify_models(smoothby_list)
+dharm.stats$dispersion
+dharm.stats$zinf
+dharm.stats$ks
+```
+
+We see the best support for a boat x angler effort term.
+
+```{r}
+dharm.out = simulateResiduals(effort_list$`boat use * angler minutes`)
+plot(dharm.out)
+
+dharm.stats = dharmify_models(effort_list)
+dharm.stats$dispersion
+dharm.stats$zinf
+dharm.stats$ks
+```
+
+#### Looking at error distribution
+
+```{r}
+out = gam(fish_count ~ te(doy, yearfac, fin_mark, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) + 
+            boat_used*angler_minutes,
+          method = "REML",
+          family = "nb",
+          data = dat.fit |> 
+            filter(mark_stage!= "Jack"))
+gam.check(out)
+gratia::qq_plot(out)
+out |> 
+  plot_seasonal_gam_panels(quant_trimming = 0.05) |> 
+  filter(boat_used == "No") |> 
+  # wrap_panels()
+  grid_panels(column_var = "fin_mark",
+              row_var = "yearfac",
+              scales_x = "fixed_all",
+              scales_y = "fixed_column",
+              scales_y_coverage = "fixed_all"
+  )
+
+
+out.ziplss = gam(list(fish_count ~ te(doy, yearfac, fin_mark, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) +
+                        boat_used*angler_minutes,
+                      ~te(doy, yearfac, fin_mark, bs = c("tp", "fs", "fs"), k = c(20, 3, 2)) + 
+                        boat_used*angler_minutes),
+                 method = "REML",
+                 family = "ziplss",
+                 data = dat.fit |> 
+                   filter(mark_stage!= "Jack"))
+
+gam.check(out.ziplss)
+qq_plot(out, method = "simulate") | qq_plot(out.ziplss)
+# 
+# plot_seasonal_gam_panels(list("negative binomial" = out,
+#                  "pois ziplss" = out.ziplss),
+#                  quant_trimming = 0.05
+#                  ) |> 
+#   filter(boat_used == "No") |> 
+# grid_panels(
+#   column_var = "fin_mark",
+#         row_var = "yearfac",
+#         scales_x = "fixed_all",
+#         scales_y = "fixed_column",
+#         scales_y_coverage = "fixed_all"
+#         )
+# 
+# qq_plot(out, method = "simulate") | qq_plot(out.ziplss)
+```
+
+We do *not* see an improvement by including zero inflation. Currently `VizSeasonalGams` does not work for the `ziplss` family, as the prediction protocols from that model type do not follow normal procedures. As such, we won't have easy panels of plots.
+
+#### Looking at smooth flexibility
+
+```{r}
+out.default = gam(fish_count ~ te(doy, yearfac, fin_mark, bs = c("tp", "fs", "fs")) + 
+                    boat_used*angler_minutes,
+                  method = "REML",
+                  family = "nb",
+                  data = dat.fit |> 
+                    filter(mark_stage!= "Jack"))
+gam.check(out.default)
+
+out.10 = gam(fish_count ~ te(doy, yearfac, fin_mark, bs = c("tp", "fs", "fs"), k = c(10, 3, 3)) + 
+               boat_used*angler_minutes,
+             method = "REML",
+             family = "nb",
+             data = dat.fit |> 
+               filter(mark_stage!= "Jack"))
+gam.check(out.10)
+
+out.20 = gam(fish_count ~ te(doy, yearfac, fin_mark, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) + 
+               boat_used*angler_minutes,
+             method = "REML",
+             family = "nb",
+             data = dat.fit |> 
+               filter(mark_stage!= "Jack"))
+gam.check(out.20)
+
+out.30 = gam(fish_count ~ te(doy, yearfac, fin_mark, bs = c("tp", "fs", "fs"), k = c(30, 3, 3)) + 
+               boat_used*angler_minutes,
+             method = "REML",
+             family = "nb",
+             data = dat.fit |> 
+               filter(mark_stage!= "Jack"))
+gam.check(out.30)
+
+
+plot_seasonal_gam_panels(list("default" = out.default,
+                              "k = 10" = out.10,
+                              "k = 20" = out.20,
+                              "k = 30" = out.30
+),
+quant_trimming = 0.05) |> 
+  filter(boat_used == "No") |> 
+  # wrap_panels()
+  grid_panels(column_var = "fin_mark",
+              row_var = "yearfac",
+              scales_x = "fixed_all",
+              scales_y = "fixed_column",
+              scales_y_coverage = "fixed_all"
+  )
+
+
+
+compare_qqs(list("default" = out.default,
+                 "k = 10" = out.10,
+                 "k = 20" = out.20,
+                 "k = 30" = out.30
+))
+
+```
+
+Looks like a k in the `doy` direction of 20 or 30 is about right.
+
+#### Including median time of day:
+
+```{r}
+out.null = gam(fish_count ~ te(doy, yearfac, fin_mark, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) + 
+                 boat_used*angler_minutes,
+               method = "REML",
+               family = "nb",
+               data = dat.fit |> 
+                 filter(mark_stage!= "Jack"))
+
+out.medtime = gam(fish_count ~ fishing_med_hrs + 
+                    te(doy, yearfac, fin_mark, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) + 
+                    boat_used * angler_minutes,
+                  method = "REML",
+                  family = "nb",
+                  data = dat.fit |> 
+                    filter(mark_stage!= "Jack"))
+# 
+# dharm.null = simulateResiduals(out.null, n= 1000, plot = FALSE)
+# dharm.medtime = simulateResiduals(out.medtime, n= 1000, plot = FALSE)
+# 
+# par(mfrow = c(1,2))
+# plotResiduals(dharm.null)
+# plotResiduals(dharm.medtime)
+# par(mfrow = c(1,1))
+# 
+# temp = testDispersion(dharm.null)
+# testDispersion(dharm.medtime)
+
+AIC(out.null, out.medtime)
+anova(out.null, out.medtime, test = "Chisq")
+
+draw(out.medtime)
+
+compare_qqs(list("no time" = out.null,
+                 "includes median time" = out.medtime))
+```
+
+Despite the above, it probably makes sense NOT to include the median time, because anglers mostly start early, and tend to stay out until they catch their limit, so the median time is going to covary with catch rates.
+
+```{r}
+dat.sum |> 
+  filter(catch_per_hour_ad > 0) |> 
+  ggplot(aes(y = catch_per_hour_ad, x= fishing_duration_minutes))+
+  geom_point()+
+  geom_smooth()
+```
+
+```{r}
+dat.fit |> 
+  mutate(fish_start_hrs = hours(fishing_start_time) + minutes(fishing_start_time)/60) |> 
+  ggplot(aes(x = fish_start_hrs))+
+  geom_histogram()
+
+```
+
+```{r}
+
+```
+
+#### Does boat angling affect seasonality?
+
+```{r}
+dat.sum |> 
+  mutate(doy = yday(event_date)) |> 
+  summarize(um_total = mean(um_total),
+            ad_total = mean(ad_total),
+            .by = c(doy, boat_used, year),
+  ) |> 
+  ggplot(aes(x = doy, y = um_total, col = boat_used))+
+  geom_point()+
+  facet_wrap(.~year)
+
+out.null = gam(fish_count ~ fin_mark + te(doy, yearfac, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) + 
+                 angler_minutes*boat_used,
+               method = "REML",
+               family = "nb",
+               data = dat.fit |> 
+                 filter(mark_stage!= "Jack"))
+
+out.boatseason = gam(fish_count ~ fin_mark + te(doy, yearfac, boat_used, bs = c("tp", "fs", "fs"), k = c(15, 3, 3)) + 
+                       angler_minutes + angler_minutes:boat_used,
+                     method = "REML",
+                     family = "nb",
+                     data = dat.fit |> 
+                       filter(mark_stage!= "Jack"))
+
+AIC(out.null, out.boatseason)
+
+boatsmooth_list = list("boat = fixed" = out.null,
+                       "smooth by boat" = out.boatseason
+)
+
+compare_qqs(boatsmooth_list)
+
+dharm = simulateResiduals(out.null, n = 1000)
+plot(dharm)
+
+dharm = simulateResiduals(out.boatseason, n = 1000)
+plot(dharm)
+
+
+plot_seasonal_gam_panels(boatsmooth_list,
+                         quant_trimming = 0.05) |> 
+  grid_panels(column_var = "fin_mark", row_var = "yearfac")
+
+```
+
+Even though the model fit is better, it looks like we lose all of our predictive power for boat seasonality.
+
+**maybe try heirarchcial here**
+
+But note that we want to be conservative -- if we slice the data too thin, we'll predict outliers and lose all our functionality.
+
+### Final model
+
+``` r
+out.null = gam(fish_count ~ fin_mark + te(doy, yearfac, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) + 
+angler_minutes*boat_used,
+method = "REML",
+family = "nb",
+data = dat.fit |> 
+filter(mark_stage!= "Jack"))
+```
+:::
+:::::

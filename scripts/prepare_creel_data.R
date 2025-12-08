@@ -16,17 +16,51 @@ fisheries <- c("Nisqually salmon 2021", "Nisqually salmon 2022", "Nisqually salm
 fishery.ls = get_fishery_data(fishery = "Nisqually salmon", years = 2021:2023)
 
 
+fishery.ls$catch |> 
+  filter(species == "Chinook") |> 
+  left_join(fishery.ls$interview |> 
+              select(interview_id, year),
+            by = "interview_id") |> 
+  summarize(n = sum(fish_count), .by = c(year, life_stage, fin_mark)) |>
+  arrange(year, life_stage, fin_mark) |> 
+  gt()
+
 interviews <- fishery.ls$interview |>  
+  mutate(fishing_end_time = if_else(trip_status == "Incomplete",
+                                    NA,
+                                    fishing_end_time)) |> 
   mutate(fishing_duration_minutes = (as.numeric(fishing_end_time) - as.numeric(fishing_start_time))/60,
          angler_minutes = fishing_duration_minutes * angler_count)
 
+
+cli::cli_alert("Integrating `angler type` into `boat_used` and cutting out angler_type")
+interviews$boat_used[is.na(interviews$boat_used) & interviews$angler_type == "Boat"] = "Yes"
+interviews$boat_used[is.na(interviews$boat_used) & interviews$angler_type == "Bank"] = "No"
+
 # bind date and waterbody data to the creel interview-based catch records
 catch <- fishery.ls$catch |> 
-  left_join(interviews |> 
-              select(interview_id, event_date, water_body, year, month, week, fishing_duration_minutes, angler_type, trip_guided, boat_type, boat_used,
+  inner_join(interviews |> 
+              select(interview_id, year, month, week, fishing_duration_minutes, trip_guided, boat_type, boat_used,
                      angler_count, angler_minutes, trip_status, fishing_start_time, fishing_end_time),
             by = "interview_id") |> 
-  filter(species == "Chinook")
+  filter(species == "Chinook") |> 
+  left_join(fishery.ls$gear, by = "interview_id")
+## integrating our two measures of when boats are used
+
+catch |> 
+  count(year, angling_method)
+
+catch |> 
+  count(year, angling_gear) |> 
+  filter(year >2021)
+
+catch |> 
+  count(year, hook_count)
+
+catch |> 
+  count(boat_used, angling_gear)
+
+#No meaningful gear info for this watershed, except that gear used is primarily "Gear"
 
 write_csv(catch,
           here("cleaned_data/key_dataframes/creel_interview_catch.csv"))
@@ -34,7 +68,7 @@ write_csv(catch,
 ## we have separate entries by fork length for measured catches. We don't want that for this.
 catch = catch |> 
   group_by(interview_id, species, life_stage, fin_mark, fate,
-           event_date, water_body, fishing_duration_minutes, angler_count, year, month, week, angler_type, trip_guided, boat_type, boat_used, trip_status, fishing_start_time, fishing_end_time, angler_minutes) |> 
+           event_date, water_body, fishing_duration_minutes, angler_count, year, month, week, trip_guided, boat_type, boat_used, trip_status, fishing_start_time, fishing_end_time, angler_minutes) |> 
   summarize(fish_count = sum(fish_count)) |> 
   ungroup() |> 
   filter(fin_mark != "UNK")
@@ -43,7 +77,7 @@ catch = catch |>
 
 df.dummy = expand_grid(interviews |> 
                          select(interview_id, event_date, water_body, fishing_duration_minutes, angler_count,
-                                angler_minutes,year, month, week, angler_type, trip_guided, boat_type, boat_used, trip_status,
+                                angler_minutes,year, month, week, trip_guided, boat_type, boat_used, trip_status,
                                 fishing_start_time, fishing_end_time, angler_minutes) |> 
                          filter(!is.na(interview_id)),
                        species = "Chinook",
@@ -73,8 +107,12 @@ table(table(catch.zerod$interview_id))
 write_csv(catch.zerod,
           here("cleaned_data/key_dataframes/creel_interview_catch_withzeros.csv"))
 
-
-
+# 
+# catch.zerod |> 
+#   summarize(count = sum(fish_count),
+#             .by = c(year, species, life_stage, fin_mark, fate)) |> 
+#   arrange(year, species, life_stage, fin_mark, fate) |> 
+#   gt()
 
 ## Combine BSS results from Evan's runs-------------
 

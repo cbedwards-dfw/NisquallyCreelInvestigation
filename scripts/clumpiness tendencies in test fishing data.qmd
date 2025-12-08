@@ -6,7 +6,7 @@ editor: visual
 
 ## Motivation
 
-Part of the Nisqually Creel Bias analysis involves asking if more anglers are reporting high counts of unmarked encounters more than we expect "should" be happening. The key challenge here is that "should" -- how to do we build an expectation for what we think anglers are actually encountering? We use some modeling techniques in our primary analysis, and ultimately (at present) we are leaning towards using a zero-inflated negative binomial error distribution. In non-statsy parlance, we've got a framework to say how likely it is that an angler encounters 10 unmarked fish by chance when the average angler is only encountering two or three. 
+Part of the Nisqually Creel Bias analysis involves asking if more anglers are reporting high counts of unmarked encounters more than we expect "should" be happening. The key challenge here is that "should" -- how to do we build an expectation for what we think anglers are actually encountering? We use some modeling techniques in our primary analysis, and ultimately (at present) we are leaning towards using a zero-inflated negative binomial error distribution. In non-statsy parlance, we've got a framework to say how likely it is that an angler encounters 10 unmarked fish by chance when the average angler is only encountering two or three.
 
 My concern is that that framework assumes the probability of an encountered fish being unmarked is independent of the last few fish caught. If, for example, unmarked fish tended to school together, or unmarked fish prefered a different part of the catch area, then an angler that encounters an unmarked school or is fishing in an unmarked-preferred area is likely to catch quite a few unmarked fish. And if our model does not account for this, our model will find these real encounter numbers suspicious.
 
@@ -16,12 +16,11 @@ We can't really look for this pattern in the Nisqually creel data -- after all, 
 
 ## Summary of results:
 
-The bottom line is we see minimal to no clumpiness. In the test fishing data we get approximately 7% more sequential pairs that are both unmarked than we expect by random chance. Using permutation testing (see Appendix 1), this was marginally significant (P<0.1 but P>0.05). We see an even weaker pattern for sequential pairs that are both marked, occurring approxiately 5% more often than we expect by random change, and this was not significant even at the P = 0.1 level. To contextualize these results of 7% and 5% numbers, imagine that an angler caught 20 fish on the same day. The clumpiness effect (if real) would explain the angler catching one more unmarked fish (or one fewer) than we would expect by random chance. So if there were many anglers on the same day that caught 20 fish, we would see very slightly more surveys with unusual numbers of unmarked fish than we would expect by chance. This is not enough to worry about for our modeling.
+The bottom line is we see minimal to no clumpiness. In the test fishing data we get approximately 7% more sequential pairs that are both unmarked than we expect by random chance. Using permutation testing (see Appendix 1), this was marginally significant (P\<0.1 but P\>0.05). We see an even weaker pattern for sequential pairs that are both marked, occurring approxiately 5% more often than we expect by random change, and this was not significant even at the P = 0.1 level. To contextualize these results of 7% and 5% numbers, imagine that an angler caught 20 fish on the same day. The clumpiness effect (if real) would explain the angler catching one more unmarked fish (or one fewer) than we would expect by random chance. So if there were many anglers on the same day that caught 20 fish, we would see very slightly more surveys with unusual numbers of unmarked fish than we would expect by chance. This is not enough to worry about for our modeling.
 
 If there is interest in further exploration of this pattern for other reasons, using the latitude/longitude of catches and time between catches in the test fishing data could help to clarify whether the minimal observed clumpiness is within a small region or reflects test fishers moving to different parts of a catch area during their survey.
 
 ## Setup
-
 
 ```{r}
 library(here)
@@ -113,6 +112,7 @@ GROUP BY s.survey_datetime, se.encounter_datetime, spl.sampling_program_code, ca
 ```
 
 Process the data
+
 ```{r}
 dat <- dat_test |> 
   filter(common_name == "Chinook Salmon",
@@ -161,7 +161,7 @@ dat_robust = dat |>
 
 ##Okay, our data is ready!
 dat_robust |> 
-  filter(survey_id_simplified %in% sample(unique(dat_robust$survey_id_simplified), 50)) |> 
+  filter(survey_id_simplified %in% sample(unique(dat_robust$survey_id_simplified), 20)) |> 
   mutate(survey_id_simplified = as.factor(survey_id_simplified)) |> 
   ggplot(aes(x = survey_id_simplified, y = encounter_id, fill = adipose_clip_status_code))+
   geom_tile()+
@@ -173,6 +173,7 @@ dat_robust |>
 ```
 
 Checking that we're not looking across multiple areas in a single survey
+
 ```{r}
 
 
@@ -183,15 +184,16 @@ dat_robust |>
   table() |> 
   table()
 ```
+
 looks good
 
 ## Approach: frequency of sequential pairs
 
-Do we see more sequential pairs of the same type (UM and then UM or AD and then AD) than we would expect if fish order was random? Looking at catch of a survey sequentially, we can calculate the frequency of each pair type. If there is a tendency for clumpiness, our same-type pairs should be more frequent than expected, and UM -> AD and AD -> UM should be less frequent than expected.
+Do we see more sequential pairs of the same type (UM and then UM or AD and then AD) than we would expect if fish order was random? Looking at catch of a survey sequentially, we can calculate the frequency of each pair type. If there is a tendency for clumpiness, our same-type pairs should be more frequent than expected, and UM -\> AD and AD -\> UM should be less frequent than expected.
 
 ### The maths
 
-The tricky part here is "how frequently do we expect a pair?". If there is no clumping, then the sequence of fish caught in a survey should be indistinguishable from randomly reordering those same catches. If we were randomly shuffling the fish in a survey had a huge number of fish in it, we would expect the probability of UM -> UM to be 
+The tricky part here is "how frequently do we expect a pair?". If there is no clumping, then the sequence of fish caught in a survey should be indistinguishable from randomly reordering those same catches. If we were randomly shuffling the fish in a survey had a huge number of fish in it, we would expect the probability of UM -\> UM to be
 
 $f(UM)f(UM)$
 
@@ -199,11 +201,11 @@ and, since for a survey with $m$ fish in it there are $(m-1)$ pairs, we expect t
 
 $(m-1)f(UM)f(UM)$
 
-pairs, Where  $f(UM)$ is the proportion of the fish in that survey that were unmarked. Analogously, if we were drawing marbles out of a jar with a ton of red and blue marbles in it, the probability of drawing two red marbles in order should be approximately the proportion of marbles in the jar that are red, squared.
+pairs, Where $f(UM)$ is the proportion of the fish in that survey that were unmarked. Analogously, if we were drawing marbles out of a jar with a ton of red and blue marbles in it, the probability of drawing two red marbles in order should be approximately the proportion of marbles in the jar that are red, squared.
 
-However, when we have a limited supply of marbles (or a survey with a finite number of fish in it), when we're looking at a pair of fish in sequence, we need to account for the fact that when we're drawing the second marble (or fish), the first marble (or fish) is already missing. For example, let's imagine a survey with 6 unmarked and 4 marked fish. Our probability of drawing an unmarked fish is $\frac{6}{10}$. But to have a UM->UM pair, we need to first draw an unmarked fish ($\frac{6}{10}$ chance) and *then* draw an unmarked fish *from the remaining available fish, which has a chance of $\frac{5}{9}$.
+However, when we have a limited supply of marbles (or a survey with a finite number of fish in it), when we're looking at a pair of fish in sequence, we need to account for the fact that when we're drawing the second marble (or fish), the first marble (or fish) is already missing. For example, let's imagine a survey with 6 unmarked and 4 marked fish. Our probability of drawing an unmarked fish is $\frac{6}{10}$. But to have a UM-\>UM pair, we need to first draw an unmarked fish ($\frac{6}{10}$ chance) and *then* draw an unmarked fish \*from the remaining available fish, which has a chance of $\frac{5}{9}$.
 
-More generally, for a sequential pair of fish that have the same mark status, we have probabilities of 
+More generally, for a sequential pair of fish that have the same mark status, we have probabilities of
 
 $\frac{f(UM)}{m}\frac{f(UM)-1}{m-1}$
 
@@ -211,13 +213,13 @@ and
 
 $\frac{f(AD)}{m}\frac{f(AD)-1}{m-1}$
 
-for UM->UM and AD -> AD respectively.
+for UM-\>UM and AD -\> AD respectively.
 
-If we do the same math above for the AD->UM or UM->AD pairs, we find we don't need the $-1$ in the numerators. With our example survey, an AD -> UM pair has a probability of first drawing an AD ($\frac{4}{10}$) and then drawing a UM from the remaining fish ($\frac{6}{9}$). More generally, this works out to be
+If we do the same math above for the AD-\>UM or UM-\>AD pairs, we find we don't need the $-1$ in the numerators. With our example survey, an AD -\> UM pair has a probability of first drawing an AD ($\frac{4}{10}$) and then drawing a UM from the remaining fish ($\frac{6}{9}$). More generally, this works out to be
 
 $\frac{f(AD)}{m}\frac{f(UM)}{m-1}$
 
-and the probability of UM -> AD is
+and the probability of UM -\> AD is
 
 $\frac{f(UM)}{m}\frac{f(AD)}{m-1}$
 
@@ -271,7 +273,7 @@ find_transition_probs = function(survey_fins){
 
 ### Quick test:
 
-We can test our math and code above by repeatedly simulating an example survey (6 UM and 6 AD fish) example survey (6 Um and 4 AD fish) with random orderings, and looking at the difference between the expected frequency of UM->UM pairs and the observed frequency. When looking over many simulations, this should approach 0.
+We can test our math and code above by repeatedly simulating an example survey (6 UM and 6 AD fish) example survey (6 Um and 4 AD fish) with random orderings, and looking at the difference between the expected frequency of UM-\>UM pairs and the observed frequency. When looking over many simulations, this should approach 0.
 
 ```{r}
 nsim = 1000
@@ -294,23 +296,33 @@ abline(h = 0, lty = 2, col = 'blue')
 
 This looks pretty good.
 
-
 <!-- ```{r} -->
+
 <!-- matrixify_transitions = function(transition_probs){ -->
+
 <!--   res = matrix(c(transition_probs$um_to_um, transition_probs$um_to_ad, -->
+
 <!--                  transition_probs$ad_to_um, transition_probs$ad_to_ad), -->
+
 <!--                nrow = 2, -->
+
 <!--                ncol = 2, -->
+
 <!--                byrow = TRUE, -->
+
 <!--                dimnames = list(rownames = c("from_um", "from_ad"),  -->
+
 <!--                                colnames = c("to_um", "to_ad"))) -->
+
 <!--   as.data.frame(res) -->
+
 <!-- } -->
+
 <!-- ``` -->
 
 ### Looking at our data
 
-```{r} 
+```{r}
 survey_transitions = dat_robust |> 
   arrange(survey_id_simplified, survey_id_simplified) |> 
   nest(.by = c(year, survey_id_simplified)) |> 
@@ -328,7 +340,7 @@ obs_probs = survey_transitions |>
   ungroup() 
 ```
 
-For each survey, we calculate how the number of UM->UM and AD->AD pairs from what we expect if the sequence of fish caught was random. Here are the histograms of that, along with the median across surveys.
+For each survey, we calculate how the number of UM-\>UM and AD-\>AD pairs from what we expect if the sequence of fish caught was random. Here are the histograms of that, along with the median across surveys.
 
 ```{r}
 ggplot(survey_transitions,
@@ -363,16 +375,13 @@ Here are the average deviations from expectations for each pair type:
 obs_probs |> gt()
 ```
 
-If there *is* a tendency for clumpiness, it's on the order of getting about 1 more pair of UM->UM or AD->AD than expected for every 21 fish caught (20 pairs). This could just be noise, or it could reflect the fact that test fishing surveys often represent long fishing bouts, and test fishers may move from one region to another (within a catch area) during that survey. If there are spatial differences in mark rates within catch areas and test fishers move during their surveys, we do expect there would be slight clumpiness.
+If there *is* a tendency for clumpiness, it's on the order of getting about 1 more pair of UM-\>UM or AD-\>AD than expected for every 21 fish caught (20 pairs). This could just be noise, or it could reflect the fact that test fishing surveys often represent long fishing bouts, and test fishers may move from one region to another (within a catch area) during that survey. If there are spatial differences in mark rates within catch areas and test fishers move during their surveys, we do expect there would be slight clumpiness.
 
 This is something we could dig into further by using test fisher lat/lon to break surveys up into sub-surveys of fish caught within a small region -- we would not expect spatial variation in mark rates to produce clumpiness in that case. However, for the purposes of the nisqually creel bias analysis, we have done enough. This tendency for clumpiness is very small (if, in fact, it is anything more than noise), and is unlikely to explain angler surveys with abnormally high numbers of unmarked catch.
 
-
 ## Appendix 1: Permutation testing of actual data
 
-This analysis has involved some complicated calculations. To confirm that my approach is doing what I think it should,
-I simulated our null expectation (fish order doesn't matter) using the actual data. For each of 1000 simulation iterations,
-I took the full dataset, randomly reordered the fish caught within each survey (total UM and AD fish caught in a survey stayed the same), and ran the full analysis above. This is relatively time consuming (~20 minutes on my computer), so I have saved the results for easier use. Set `do.sim` argument at the beginning of this script to `TRUE` to rerun the simulations; otherwise the past results get read in.
+This analysis has involved some complicated calculations. To confirm that my approach is doing what I think it should, I simulated our null expectation (fish order doesn't matter) using the actual data. For each of 1000 simulation iterations, I took the full dataset, randomly reordered the fish caught within each survey (total UM and AD fish caught in a survey stayed the same), and ran the full analysis above. This is relatively time consuming (\~20 minutes on my computer), so I have saved the results for easier use. Set `do.sim` argument at the beginning of this script to `TRUE` to rerun the simulations; otherwise the past results get read in.
 
 ```{r}
 if(do.sim){
@@ -403,7 +412,7 @@ if(do.sim){
 }
 ```
 
-For each simulation, we calculated the average deviation of UM->UM and AD->AD pair frequency from our expectation. In our actual data, we found values of `r round(obs_probs$um_to_um_diff, 4)` and  `r round(obs_probs$ad_to_ad_diff, 4)` for those average deviations.
+For each simulation, we calculated the average deviation of UM-\>UM and AD-\>AD pair frequency from our expectation. In our actual data, we found values of `r round(obs_probs$um_to_um_diff, 4)` and `r round(obs_probs$ad_to_ad_diff, 4)` for those average deviations.
 
 ```{r}
 sim.probs |> 
@@ -430,21 +439,21 @@ sim.probs |>
 
 ```
 
-We can look at the 95% and 90% ranges of simulated average UM->UM deviations and see if our observed average deviation fell outside of those; this is equivalent to testing for significance at the P < 0.05 and P < 0.1 levels. As a reminder, because we use 2-tailed tests, data is outside of the range of 90% of the data (significant at the P<0.1 level) if is less than 0.05 quantile or greater than the 0.95 quantile. Here are quantiles from the simulations:
+We can look at the 95% and 90% ranges of simulated average UM-\>UM deviations and see if our observed average deviation fell outside of those; this is equivalent to testing for significance at the P \< 0.05 and P \< 0.1 levels. As a reminder, because we use 2-tailed tests, data is outside of the range of 90% of the data (significant at the P\<0.1 level) if is less than 0.05 quantile or greater than the 0.95 quantile. Here are quantiles from the simulations:
 
 ```{r}
 quantile(sim.probs$um_to_um_diff, probs = c(0.025, 0.05, 0.95, 0.975))
 ```
 
-Our observed deviation of `r round(obs_probs$um_to_um_diff, 4)` was greater than the 95% quantile, so was significant at the P<0.05 level. However, it was less than the 97.5% quantile, so was not significant at the P<0.05 level.
+Our observed deviation of `r round(obs_probs$um_to_um_diff, 4)` was greater than the 95% quantile, so was significant at the P\<0.05 level. However, it was less than the 97.5% quantile, so was not significant at the P\<0.05 level.
 
-We can do a similar procedure for AD->AD deviations
+We can do a similar procedure for AD-\>AD deviations
 
 ```{r}
 quantile(sim.probs$ad_to_ad_diff, probs = c(0.025, 0.05, 0.95, 0.975))
 ```
 
-Our observed deviation of `r round(obs_probs$ad_to_ad_diff, 4)` was not significant at the P<0.1 level.
+Our observed deviation of `r round(obs_probs$ad_to_ad_diff, 4)` was not significant at the P\<0.1 level.
 
 <!-- The following does not produce results that make a ton of sense to me. Why is there a tendency for non UM->UM or AD->AD pairs? I suspect there is something problematic with the modeling approach I'm taking. -->
 
@@ -457,85 +466,131 @@ Our observed deviation of `r round(obs_probs$ad_to_ad_diff, 4)` was not signific
 <!-- It's important that we include survey id as a factor here, to account for different overall frequencies of marked and unmarked fish in each survey -->
 
 <!-- ```{r} -->
+
 <!-- dat.lagged = dat_robust |>  -->
+
 <!--   group_by(survey_id_simplified) |>  -->
+
 <!--   mutate(fish_um = adipose_clip_status_code == "UM", -->
+
 <!--          lagged_um = lag(fish_um), -->
+
 <!--          survey_id_fac = factor(survey_id_simplified)) |>  -->
+
 <!--   ungroup() |>  -->
+
 <!--   select(year, survey_id_fac, fish_um, lagged_um, catch_area_code) -->
 
 <!-- out = glm(fish_um ~ lagged_um + survey_id_fac, -->
+
 <!--           data = dat.lagged, -->
+
 <!--           family = "binomial") -->
+
 <!-- ``` -->
-
-
 
 <!-- ## More complex: separate model for each survey -->
 
 <!-- ```{r} -->
+
 <!-- calc_lagged_predictive_power = function(survey_fins){ -->
+
 <!--   dat = tibble(fish_um = survey_fins == "UM") |>  -->
+
 <!--     mutate(lagged_um = lag(fish_um)) -->
+
 <!--   out = glm(fish_um ~ lagged_um, data = dat, family = "binomial") -->
+
 <!--   res = data.frame(coef = coef(out)[2], -->
+
 <!--                    p = Anova(out)$`Pr(>Chisq)`) -->
+
 <!--   return(res) -->
+
 <!-- } -->
+
 <!-- ``` -->
 
 <!-- survey_predictive = dat_robust |>  -->
+
 <!--   arrange(survey_id_simplified, encounter_id) |>  -->
+
 <!--   nest(.by = c(year, survey_id_simplified)) |>  -->
+
 <!--   mutate(logistic_results = purrr::map_df(data, -->
+
 <!--                                           function(df){calc_lagged_predictive_power(df$adipose_clip_status_code)})) |>  -->
+
 <!--   select(-data) |>  -->
+
 <!--   unnest(logistic_results) -->
 
 <!-- hist(survey_predictive$coef, breaks = 50) -->
 
 <!-- predictive_summary = data.frame(t(quantile(survey_predictive$coef, probs = c(0.025, 0.1, 0.5, 0.9, 0.975)))) -->
+
 <!-- predictive_summary$freq_significant = mean(survey_predictive$p < 0.05) -->
+
 <!-- predictive_summary -->
 
 <!-- ## Simulations to check null -->
 
-
 <!-- if(do.sim){ -->
+
 <!--   cl <- makeCluster(6) -->
+
 <!--   registerDoParallel(cl) -->
+
 <!--   nsim = 1000 -->
 
 <!--   sim.ls = foreach(i = 1:nsim,  -->
+
 <!--                    .packages = c("tidyverse", "lme4", "car")) %dopar% { -->
 
 <!--     survey_predictive = dat_robust |>  -->
+
 <!--       arrange(survey_id_simplified, encounter_id) |>  -->
+
 <!--       nest(.by = c(year, survey_id_simplified)) |>  -->
+
 <!--       mutate(logistic_results = purrr::map_df(data, -->
+
 <!--                                               function(df){calc_lagged_predictive_power(sample(df$adipose_clip_status_code))})) |>  -->
+
 <!--       select(-data) |>  -->
+
 <!--       unnest(logistic_results) -->
 
 <!--     cur.predictive_summary = data.frame(t(quantile(survey_predictive$coef, probs = c(0.025, 0.1, 0.5, 0.9, 0.975)))) -->
+
 <!--     cur.predictive_summary$freq_significant = mean(survey_predictive$p < 0.05) -->
 
 <!--     sim.ls[[i]] = cur.predictive_summary -->
+
 <!--   } -->
+
 <!--   stopCluster(cl) -->
 
 <!--   sim.df = do.call(rbind, sim.ls) -->
 
 <!--   write_csv(sim.df,  -->
+
 <!--             here("results/simulations/clumpiness-logistic-null-sims.csv")) -->
+
 <!-- } else { -->
+
 <!--   sim.df = read_csv(here("results/simulations/clumpiness-logistic-null-sims.csv")) -->
+
 <!-- } -->
 
 <!-- ggplot(sim.df, aes(x = X50.))+ -->
+
 <!--   geom_histogram(bins = 50)+ -->
+
 <!--   geom_vline(xintercept = predictive_summary$X50.)+ -->
+
 <!--   geom_vline(xintercept = quantile(sim.df$X50., probs = c(0.025, 0.975)), linetype = 2)+ -->
+
 <!--   theme_bw()+ -->
+
 <!--   labs(xlab = "median") -->

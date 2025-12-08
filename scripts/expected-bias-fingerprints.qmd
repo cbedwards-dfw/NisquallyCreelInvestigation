@@ -236,7 +236,6 @@ dat.mis = dat.mis |>
 
 ```
 
-
 ```{r plotting misidentification}
 dat.join = bind_rows(dat.mis |> mutate(type = "observed"), 
                      dat.true |> mutate(type = "predicted"))

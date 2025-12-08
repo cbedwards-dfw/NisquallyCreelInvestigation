@@ -1,0 +1,84 @@
+---
+title: "Methods outline"
+author: "Collin Edwards"
+---
+
+Our goal with this project is to identify ways in which information in Nisqually creel interviews may be consistently wrong, leading to statistical bias. This was motivated primarily due to apparently strange estimated mark rates in the 2023 creel data. This work was carried out by Evan Booher, Colt Holley, and Collin Edwards, with substantial input by the regional WDFW team (Gabe Madell, Riley) and the Nisqually Comanagers (primarily Craig Smith). We held broader meetings with interested staff on the WDFW and tribal side as we hit analysis milestones.
+
+## Important language clarification
+
+Before going further, we wish to clarify what we mean by "bias". In common use, bias is a very negative term and frequently evokes expectations of malice. For example, we might describe a sexist as someone who has a bias against people based on their gender. That is *not* the way we use bias in a statistical sense, as we will be doing throughout this document. In statistics, bias is "a sysematic tendency in which methods used to gather data and estimate a sample statistic [like mark rate] present an inaccurate, skewed, or distorted depiction of reality" ([wikipedia](https://en.wikipedia.org/wiki/Bias_(statistics)). 
+
+Here, we are concerned with identifying if, on average, we are overestimating (or underestimating) the mark rate. Because of sampling variation, our estimate is unlikely to exactly match the true underlying mark rate, and we will undoubtedly overestimate and underestimate the true mark rate. If our methods are unbiased, overestimations and underestimations will balance out in the long term. Our concern here is that they might not, and overestimations may be bigger or more frequent than underestimations (or vice versa). 
+
+If present, statistical bias *could* be caused by intentional angler behavior akin to the common use of "bias", but could also be caused by unintentional behavior that favors overestimation over understimation (or vice versa). For example, we will explore the potential for pink salmon to be misidentified as unmarked chinooks; if this occurs, unskilled anglers may unintentionally over-report unmarked chinook, causing a bias towards underestimation. As readers continue through this document and see us discussing and potentially identifying bias, we ask them to remember that we are seeking to identify problems with the data, not assessing the moral character of anglers.
+
+## Initial warning signs
+
+Before discussing our investigation into potential bias in the creel data, it is valuable to identify *how* the 2023 data was strange and confirm that it was indeed problematic. There were two sources of concern in the 2023 data. First, the weekly mark rate estimates based on creel data appeared to be vary substantially from one week to the next in ways that are biologically implausible. Second, the weekly mark rate estimates from creel estimates were noticeably different from the mark rates estimated from the nearby tribal net fishery; given the close proximity, we would expect both fisheries to be encountering similar proportions of marked and unmarked fish.
+
+Upon digging deeper, both of these concerns are reasonable but there are some complicating factors. The weekly mark rate estimates from the creel data have historically been implemented without estimating uncertainty (ie, error bars). When we look at weekly estimates with 95% confidence intervals, we see that the apparent weekly variability is likely due to the uncertainty in our estimates, especially in early weeks which have limited data. The management impacts of creel estimates are based on the yearly estimated mark rate, so variability and uncertainty associated with estimating weekly mark rates does not have an affect on management.
+
+## Investigating creel implementation issues
+
+Experimental design is incredibly important for complex survey programs like creel. As a simple example, we see a signal of depletion of marked fish across the day when looking at bank angler data -- bank anglers have a much higher hourly catch rate of marked fish around 6 in the morning than in mid afternoon. This depletion effect is much lower for unmarked fish. For this reason, if creel interviews all occurred early in the morning, they would over-estimate the mark rate of the day as a whole; similarly if creel interviews all occured late in the day, they would under-estimate the mark rate. The experimental design of the Nisqually creel program was carefully developed to account for complications like this, and was not implemented until it had approval from X. 
+
+While the design of Nisqually creel should account for sources of bias like temporal variation, actually implementing data-gathering in the real world rarely if ever allows us to perfect follow an experimental design. Something as simple as a car or boat breaking down can disrupt sampling, changing the survey periods on a specific day away from the design-specified plan. Minor deviations from the experimental plan are to be expected and should have no real impact on estimated mark rates, but frequent and substantial deviations could cause problems. We assessed the consistency of our survey data, checking against the expectations of our experimental design.
+
+We found deviations were minimal and infrequent, such that they would have no impact on estimated mark rates. We also built code infrastructure to automate these checks, so that we can detect substantial deviations as they happen in-season, allowing us to address and correct them before they have a chance to become problematic.
+
+## Investigating problems in reported catch
+
+Having confirmed that any problems with estimated mark rates does not come from the implementation of the sampling design, we next looked to see if there were signs of bias in the data reported in the creel surveys.
+
+After discussion with comanagers and assessing the practical limitations of our data, we identified four forms of bias to investigate.
+
+- digit bias: if anglers don't recall the exact number of fish encountered, they might approximate to the nearest 10 or 5. If more anglers had low encounter numbers than high encounter numbers, this could lead to more rounding up than rounding down, leading to an overestimation of fish encountered.
+- prestige bias: some anglers may feel embarrassed reporting no fish caught (or wish to look more skilled than they are), and over-report fish caught. Since creelers can confirm the number of kept fish, anglers who want to over-report are likely to over-report unmarked fish which they should not have kept.
+- pink misidentification: To an inexperienced angler, a pink salmon can be mistaken for a small Chinook. Because pink salmon are not marked, this may lead inexperienced anglers to report additional "unmarked Chinook" that are in fact not Chinook at all. We expect this form of bias to be more problematic in the Nisqually basin than in other parts of the state, as it is the closest salmon fishing to Joint Base Lewis-McChord. As such, it is likely to attract anglers who are enlisted and serve at the base; many of these enlisted anglers will not have been in the state for long. 
+- intentional misreporting: some anglers may intentionally lie to creelers out of obstinancy, some desire to manipulate management, or other reasons. 
+
+### Modeling
+
+For each of these forms of bias, a key tool is to have some expectations for what we "should" see in the data. For example, we would identify digit bias if we have more reported values of 5 or 10 fish than we expected to see. How do we build that expectation? We sometimes start with simple approaches. For example, if we see substantially more reported fish counts at 5 than at 3, 4, 6, and 7, that may be indicative of digit bias. Surveys with biologically implausible Chinook catch rates (e.g. a fish every 20 minutes) may reflect pink misidentification or intentional misreporting. However, each fish count comes from the specific context of a survey; depending on the time, day, year, angler method, and angler count, our expectations should differ. 
+
+To build a more quantiative and robust set of expectations, we developed a set of generalized additive models to estimate the number of fish caught in each class (marked and unmarked, jack and adult), and a separate set of generalized additive models to estimate the mark rate. These models were developed in consultation with the local WDFW and tribal staff. We used model selection tools (primarily AIC) to compare different permutations of models and identify the models with the best predictive power. The best catch model assumed negative binomial error, and had terms accounting for:
+
+ - fish class (marked or unmarked, adult or jack)
+ - angler type (boat or bank)
+ - [median time of angler trip?? -- haven't tried running]
+ - angler effort, which depends on both the number of anglers and how long they fished (represented with angler-minutes)
+ - year
+ - interview id (accounting for the fact that we have 4 counts from each interview: one for each class of fish; without this we would have pseduoreplication issues)
+ - day of year within the year (capturing seasonality)
+ 
+ Most of these terms were fixed effects. Interview id was included as a random effect, as it was included to account for pseudo-replication and we want to minimize the explanatory power that is allocated to interview id over other predictors. Day of year was modeled as a penalized smooth, which could model the number of fish caught as increasing early in the season and then decreasing late in the season. We specified this smooth such that it could be different for each year and each fish class.
+ 
+ We implemented this model using the r package `mgcv`; given the size of the data and complexity of the model, when fitting models that included a random effect of interview id we used the function `bam`, using the `fREML` method and setting `discrete = TRUE`. For other models we used the more typical `gam` function with the `REML` method.
+ 
+ To model mark rates, we fit a [[logistic regression smoothing spline ??]]; the best model included the following terms:
+ 
+ - ?
+ - ??
+ 
+These fitted models were able to predict catch or mark rate for individual interviews, allowing us to compare observation from expectation. If one of our forms of bias was present and produced patterns our models could represent, the signature of bias might be present in the model fit itself. For example, if pink salmon have slightly different seasonal timing and misidentification of pinks is frequent, we would expect to see that the smooths for seasonality in our model should show shifted timing for unmarked chinook encounters in pink years. On other hand, our model cannot represent some forms of bias like digit bias, as the error distribution (negative binomial) does not have any special parameters to allow flexibility in the reports of 5 or 10 fish independently of other counts. In those cases, bias would appear as interviews that differed substantially from model predictions.
+
+What does "differing substantially" look like? We used the fitted model to provide the estimated negative binomial parameters for each count in each survey, and used those to calculate the model-estimated probabilities of catching 0, 1, ..., 30 fish of that class (marked or unmarked, adult or jack). With those probabilities, we can calculate the probability (according to the model) of seeing a survey value as extreme or more extreme than what was actually observed. A low probability here may reflect observations in which the count is driven by some factor not included in the model, such as one of our forms of bias.
+
+An unfortunate complication in interpretting these probabilities is that with the negative binomial distribution, it is "easy" for the model to predict a count of 0, leading to counts of 0 being very high probability. Surveys with a catch of 1 have much lower probabilities across the board, even though we don't think that catching a fish is an unusual or problematic occurance. **It is unclear how we can account for this -- our goal is not to flag all interviews with high catch as problematic, but rather to have a tool to identify specific interviews in which a high catch is problematic. This is an ongoing area of work.**
+ 
+### Digit bias
+
+### Prestige bias
+
+### Misidentification
+
+### Intentional misreporting
+
+
+
+## Consequences of bias
+
+The ultimate concern is that bias in creel data may lead to incorrect estimates of mark rates, which would have consequences for management decisions. This makes it important to investigate the practical consequences of problematic creel interviews. We 
+
+## Developing flagging rules

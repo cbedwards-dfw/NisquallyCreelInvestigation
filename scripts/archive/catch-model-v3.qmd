@@ -6,10 +6,10 @@ editor: visual
 
 ## Todo
 
--   run with angler minutes
--   problems with 2021 data, run without that
--   incorporate information on angler type
--   Model jacks!!
+- run with angler minutes
+- problems with 2021 data, run without that
+- incorporate information on angler type
+- Model jacks!!
 
 ## Purpose
 
@@ -137,7 +137,6 @@ dharmify_models = function(model_list, do.outliers = FALSE){
 
 ```
 
-
 ```{r}
 doy_2md=function(i){
   ymd=as.Date(i-1, origin="2019-01-01")
@@ -148,7 +147,6 @@ facet_names <- c(`FALSE` = "Reported no kept fish",
                  `TRUE` = "Reported 1+ kept fish")
 
 ```
-
 
 ```{r augment_drawn_doy_panel}
 
@@ -269,7 +267,6 @@ draw_gratia_tensor_doy <- function(object, ##
   return(res)
 }
 ```
-
 
 ### Reading in the data
 
@@ -842,29 +839,23 @@ dat.fit = dat.fit |>
 For this reason, we cannot choose models that include a separate smooth across doy for each mark x stage. One work-around is to lump marked and unmarked jacks together into a single mark x stage, so we have um adults, ad adults, and jacks.
 
 ::: panel-tabset
-
 ### New exploration
 
 Conversation with Evan:
 
-- How do we want to handle jacks?
-Ans: We should fit a separate Jack model
+- How do we want to handle jacks? Ans: We should fit a separate Jack model
 
 - What are the ways to tell the story of this?. Two different fisheries that are adjacent, sometimes operating and nearly the same time, sometimes not. Happening in a shared space.
-- can look at mark rates in tribal vs angler, maybe by region?
-- can we get estimates of the # of UM hatch vs natural fish??
 
+- can look at mark rates in tribal vs angler, maybe by region?
+
+- can we get estimates of the \# of UM hatch vs natural fish??
 
 Considerations:
 
-Additional predictors:
- - **should we include median time?** This is now modeled as fishing_med_hrs
- - **Nisq net open on day of interview?** Would need their fishing schedule and closure dates for the last few years. Could do the same with sport fishing to predict nisq net?
+Additional predictors: - **should we include median time?** This is now modeled as fishing_med_hrs - **Nisq net open on day of interview?** Would need their fishing schedule and closure dates for the last few years. Could do the same with sport fishing to predict nisq net?
 
-**Effort**: angler_minutes, boat_used, their interaction
-**what factors do we want to smooth by?**: by year? By stage? By um/ad? 
-**What type of error distribution**: Negative binomial? Could try `Zip` family or `ziplss` for zero-inflaction.
-**Do we want to use hierarchical approaches?**: check Pedersen et al.
+**Effort**: angler_minutes, boat_used, their interaction **what factors do we want to smooth by?**: by year? By stage? By um/ad? **What type of error distribution**: Negative binomial? Could try `Zip` family or `ziplss` for zero-inflaction. **Do we want to use hierarchical approaches?**: check Pedersen et al.
 
 #### Looking at smooth-by decisions
 
@@ -1077,9 +1068,6 @@ dharm.stats$zinf
 dharm.stats$ks
 ```
 
-
-
-
 #### Looking at error distribution
 
 ```{r}
@@ -1194,9 +1182,7 @@ compare_qqs(list("default" = out.default,
 
 ```
 
-
 Looks like a k in the `doy` direction of 20 or 30 is about right.
-
 
 #### Including median time of day:
 
@@ -1254,7 +1240,6 @@ dat.fit |>
   
 ```
 
-
 ```{r}
 
 ```
@@ -1307,22 +1292,19 @@ plot_seasonal_gam_panels(boatsmooth_list,
 
 ```
 
-Even though the model fit is better, it looks like we lose all of our predictive power for boat seasonality. 
+Even though the model fit is better, it looks like we lose all of our predictive power for boat seasonality.
 
 **maybe try heirarchcial here**
 
 But note that we want to be conservative -- if we slice the data too thin, we'll predict outliers and lose all our functionality.
 
-
-
 ### Final model
 
-`fish_count ~ 
+\`fish_count \~
 
 ### Model fitting
 
 (see `catch-model-fitting.R` for versions that include random effects of interview)
-
 
 ```{r}
 out = gam(fish_count ~ te(doy, yearfac, mark_stage, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) + 
@@ -1953,9 +1935,6 @@ testDispersion(simulationOutput)
 testZeroInflation(simulationOutput)
 ```
 
-
-
-
 ### Final model
 
 - fixed effect of fin mark
@@ -1965,16 +1944,9 @@ testZeroInflation(simulationOutput)
 - negative binomial
 - k = 20 to ensure enough flexibility
 - modeling jacks separately
-- modeling 
+- modeling
 
-`gam(fish_count ~ fin_mark + te(doy, yearfac, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) + 
-            boat_used*angler_minutes,
-          method = "REML",
-          family = "nb",
-          data = dat.fit |> 
-            filter(mark_stage!= "Jack"))`
-            
-    
+`gam(fish_count ~ fin_mark + te(doy, yearfac, bs = c("tp", "fs", "fs"), k = c(20, 3, 3)) +              boat_used*angler_minutes,           method = "REML",           family = "nb",           data = dat.fit |>              filter(mark_stage!= "Jack"))`
 
 ### calculating predicted distributions
 
@@ -2292,9 +2264,9 @@ Complication: the tensor product smooth we use in our best model is not somethin
 
 If our model is too constrained in terms of dispersion, we may be "forcing" discrepencies. A few ways to address dispersion:
 
--   Are we zero-inflated? Tests above did not seem to indicate that we were, but this is still worth checking
--   Is dispersion different between marked and unmarked fish?
--   Should we be using a different version of the negative binomial? e.g. scaling quadratically rather than linearly with the sum of our predictors?
+- Are we zero-inflated? Tests above did not seem to indicate that we were, but this is still worth checking
+- Is dispersion different between marked and unmarked fish?
+- Should we be using a different version of the negative binomial? e.g. scaling quadratically rather than linearly with the sum of our predictors?
 
 Here I test a series of model structures to see what has the best support using AIC (for AIC, the lowest is the best).
 

@@ -1460,11 +1460,13 @@ dharm.stats$ks
 
 We see the best support for a boat x angler effort term.
 
+**CBE note 6/4/26: effort_list is not defined above. Commenting these out here for now. **
+
 ```{r}
-dharm.out = simulateResiduals(effort_list$`boat use * angler minutes`)
+# dharm.out = simulateResiduals(effort_list$`boat use * angler minutes`)
 plot(dharm.out)
 
-dharm.stats = dharmify_models(effort_list)
+# dharm.stats = dharmify_models(effort_list)
 dharm.stats$dispersion
 dharm.stats$zinf
 dharm.stats$ks

@@ -79,3 +79,6 @@ WHERE l.location_code IN('132011', '132276', '132279', '132324', '132323', '1323
 ")
 
 dim(catch_near_nisqually)
+
+## catch in the correct years
+catch_near_nisqually |> filter(year %in% 2021:2023) |> dim()

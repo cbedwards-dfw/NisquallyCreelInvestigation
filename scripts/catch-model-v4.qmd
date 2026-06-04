@@ -194,7 +194,7 @@ augment_drawn_doy_panel = function(cur.panel, #panel from draw.gam, accessed wit
   
   hist1 = dat.rugs |> 
     filter(.data[[facet_by]] == cur.panel$data[[facet_by]][1]) |> 
-    ggplot(aes(x = doy, y = n))+
+    ggplot(aes(x = doy, y = n)) +
     scale_y_continuous(n.breaks = 2)+
     xlim(layer_scales(cur.panel)$x$range$range)+
     geom_col(na.rm = TRUE)

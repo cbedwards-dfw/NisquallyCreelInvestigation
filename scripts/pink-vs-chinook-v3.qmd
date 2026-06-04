@@ -5,7 +5,7 @@ format: html
 editor: visual
 ---
 
-Quick note from Collin: Gavin has a tutorial on getting teh difference between two smooths and estimating uncertainty. Probably can adapt this to the quotient of two smooths. https://fromthebottomoftheheap.net/2017/12/14/difference-splines-ii/
+Quick note from Collin: Gavin has a tutorial on getting the difference between two smooths and estimating uncertainty. Probably can adapt this to the quotient of two smooths. https://fromthebottomoftheheap.net/2017/12/14/difference-splines-ii/
 
 ```{r}
 library("CreelEstimateR")
@@ -41,7 +41,6 @@ catch.pinks |>
   ungroup() |> 
   gt()
 ```
-
 
 ```{r basic plots}
 # plot total daily encounters of Chinook and pink salmon for 2021
@@ -121,7 +120,6 @@ chin.fit =  catch.pinks |>
   mutate(mark_stage = as.factor(paste0(fin_mark, " X ", life_stage)))
 ```
 
-
 ```{r}
 out.pink = gam(fish_count ~ 
                  yearfac + s(doy, by = yearfac) +
@@ -134,7 +132,6 @@ draw(out.pink) +
   xlim(c(220, 300)) +
   ylim(c(-10, 10))
 ```
-
 
 ## Collin Modeling
 

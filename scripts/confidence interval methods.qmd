@@ -80,7 +80,6 @@ confint_fromsample = function(p, #sample probability of marked (or other status 
 inv_logit = function(x) {exp(x)/(exp(x)+1)}
 ```
 
-
 ### Getting the data
 
 ```{r}
@@ -109,7 +108,6 @@ catch <- datapull$`Nisqually salmon 2023`$catch |>
   filter(species == "Chinook") |> 
   mutate(week = framrsquared::statistical_week(event_date))
 ```
-
 
 ## Analysis
 
@@ -200,7 +198,6 @@ ggplot(dat.use, aes(x = event_date, y = est))+
   ggtitle("Comparing confint methods, 2023")
 ```
 
-
 Trying a single model across all data
 
 ```{r}
@@ -213,7 +210,7 @@ out =  glmer(cbind(AD, UM) ~ as.factor(event_date) + (1 | interview_id:event_dat
 
 ```
 
-## Try on a weekly scale --> this should help fix the issues. 
+## Try on a weekly scale --\> this should help fix the issues.
 
 ```{r}
 events.use = names(table(dat$event_date)[table(dat$event_date)>1])
@@ -225,4 +222,3 @@ out =  glmer(cbind(AD, UM) ~ 0 + as.factor(week) + (1 | interview_id),
              control = glmerControl(optimizer = "bobyqa"))
 
 ```
-

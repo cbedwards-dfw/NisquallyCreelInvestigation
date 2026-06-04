@@ -6,10 +6,10 @@ editor: visual
 
 ## Todo
 
-- run with angler minutes
-- problems with 2021 data, run without that
-- incorporate information on angler type
-- Model jacks!!
+-   run with angler minutes
+-   problems with 2021 data, run without that
+-   incorporate information on angler type
+-   Model jacks!!
 
 ## Purpose
 
@@ -48,6 +48,8 @@ facet_names <- c(`FALSE` = "Reported no kept fish",
 
 ### Reading in the data
 
+The 2021 data we have available doesn't match the underlying datasheets. Until BDS fixes this, we will use only 2022 and 2023 data.
+
 ```{r}
 ## rerun the following to recreate the clean data
 if(FALSE){
@@ -58,12 +60,15 @@ raw = read_csv(here("cleaned_data/key_dataframes/creel_interview_catch_withzeros
 ## Note: problem with col 4 being interpreted as a T/F instead of char
 
 dat = raw |> 
-  filter(species == "Chinook")
+  filter(species == "Chinook") 
 
+## Aggregate fish caught to survey level, calculate some survey metrics
 dat.sum = dat |> 
   filter(fin_mark %in% c("UM", "AD")) |> 
-  group_by(interview_id, event_date, year, month, fishing_duration_minutes,
-           angler_count, angler_minutes, trip_status, angler_type, trip_guided, boat_type, boat_used, fishing_start_time, fishing_end_time) |> 
+  group_by(interview_id, event_date, year, month,
+           fishing_duration_minutes, angler_count, angler_minutes,
+           trip_status, boat_used, trip_guided, 
+           boat_type, fishing_start_time, fishing_end_time) |> 
   summarize(um_adult = sum(fish_count[fin_mark == "UM" & life_stage == "Adult"]),
             ad_adult = sum(fish_count[fin_mark == "AD" & life_stage == "Adult"]),
             released_adult = sum(fish_count[fate == "Released" & life_stage == "Adult"]),
@@ -83,16 +88,18 @@ dat.sum = dat |>
          had.release = released_total > 0,
          had.kept = kept_total > 0)
 
-## for now, ignore jacks
 
-dat.fit = dat |> 
-  # filter(life_stage == "Adult") |> 
+dat.fit = 
+  dat |> 
   filter(fin_mark %in% c("UM", "AD")) |> 
-  group_by(interview_id, life_stage, fin_mark, event_date, year, month, fishing_duration_minutes, 
-           angler_count, angler_minutes, trip_status, angler_type, trip_guided, boat_type, boat_used,
-           fishing_start_time, fishing_end_time) |>   
+  mutate(boat_used = as.factor(boat_used)) |> 
+  group_by(interview_id, life_stage, fin_mark, event_date, 
+           year, month, fishing_duration_minutes, 
+           angler_count, angler_minutes, trip_status, 
+           trip_guided, boat_type,
+           boat_used, fishing_start_time, fishing_end_time) |>   
   summarize(fish_count = sum(fish_count)) |> 
-  ungroup() |> 
+  ungroup() |>
   ## need to collapse the data down a bit
   left_join(dat.sum |> 
               select(interview_id, had.ad, had.um, had.release, had.kept, um_total, ad_total),
@@ -120,22 +127,10 @@ dat.fit = dat |>
 
 Note that we're skipping the \~500 (out of \~65,000) observations with no fishing time. These are entirely from incomplete trips in 2021, which can't be compared apples-to-apples with completed trips anyways.
 
-#### Removing 2021
-
-The 2021 data we have available doesn't match the underlying datasheets. Until BDS fixes this, we will use only 2022 and 2023 data.
-
-```{r}
-dat.sum = dat.sum |> 
-  filter(year != 2021)
-
-dat.fit = dat.fit |> 
-  filter(year != 2021)
-```
-
-
 ::::: panel-tabset
-
 ## Looking at the data
+
+:::::: panel-tabset
 
 The number of fish caught should vary based on time of year and time spent fishing, but we can still start with some basic summaries of the number of reported unmarked fish.
 
@@ -147,11 +142,12 @@ dat.sum |>
   gt()
 ```
 
-We can look at the breakdown of angler minutes per trip to see if the highest UM encounter trips
+We can look at the breakdown of angler minutes per trip to see if the highest UM encounter trips are unusual. Adding jitter to Y axis but not X axis.
 
 ```{r}
-ggplot(dat.sum, aes(x = angler_minutes, y = um_total, col = um_total==10))+
-  geom_jitter(width = 0, height = 0.3)+theme_bw()+
+ggplot(dat.sum, aes(x = angler_minutes, y = um_total))+
+  geom_jitter(width = 0, height = 0.2)+
+  theme_bw()+
   labs(x = "angler minutes (duration x # of anglers)", y = "Unmarked encounters",
        title = "Unmarked encounters by fishing time")
 ```
@@ -168,13 +164,13 @@ dat.sum |>
   gt()
 ```
 
-It's also relevant to look at what time of year this occured in.
+It's also relevant to look at what time of year this occurred in.
 
 ```{r}
 dat.sum |> 
   mutate(doy = yday(event_date)) |> 
   ggplot(aes(x = doy, y = um_total, col = um_total==10))+
-  geom_jitter(width = 0, height = 0.3)+theme_bw()+
+  geom_jitter(width = 0, height = 0.2)+theme_bw()+
   labs(y = "Unmarked encounters",
        title = "Unmarked encounters by season")+
   scale_x_continuous(labels = doy_2md)
@@ -184,8 +180,7 @@ They certainly ARE the time of year when unmarked encounters were highest.
 
 ### Minutes per catch
 
-We can look at how realistic some of this data is by calculating the average angler minutes per catch, and see if some of the observations are not realistic.
-Trips with no catch will be treated as NAs for this calculation.
+We can look at how realistic some of this data is by calculating the average angler minutes per catch, and see if some of the observations are not realistic. Trips with no catch will be treated as NAs for this calculation.
 
 ```{r}
 dat.sum = dat.sum |> 
@@ -205,16 +200,14 @@ Let's look at the top 20 fastest catching surveys:
 ```{r}
 dat.sum |> 
   arrange((minutes_per_catch)) |> 
-  select(minutes_per_catch, um_total, ad_total, fishing_duration_minutes , angler_count, boat_used, event_date, fishing_start_time, fishing_end_time) |> 
+  select(minutes_per_catch, released_total, um_total, released_jack, kept_total, fishing_duration_minutes , angler_count, boat_used, event_date, fishing_start_time, fishing_end_time) |> 
   head(20) |> 
   gt() |> 
-  gt_highlight_rows(rows = um_total == 5)
+  gt_highlight_rows(rows = released_total >= 5)
 
 ```
 
-We have an impossible data point with identical start and end time. Other than that, we are looking at generally seems feasible. Further, the data is not dominated by surveys that are primarily high UM encounters. That said, our two highest UM reported (5 UM encounters) are in the top 20 most efficient catch trips, with averages of 30 and 40 angler-minutes per fish for those trips. Trips with high UM catch must necessarily have high catch rates (or huge surpluses of angler-minutes), but this might border on the unreasonable?
-
-
+We have an impossible data point with identical start and end time. I think there it is an open question to ask how reasonable the other surveys are. The fastest catching survey had 2 kept fish, which means their catch was verifiable. Either they had incredible luck at catching quickly, or they may have misreported the start/end time. How reasonable is it to catch a fish every thirty minutes? I am particularly skeptical of the survey from 2023-09-28. They claim to have caught 8 chinook total (5 um, 3 ad) in 4 angler-hours, and they released every ad fish.
 
 ```{r}
 dat.plot = dat.sum |> 
@@ -223,14 +216,13 @@ dat.plot = dat.sum |>
 dat.plot |> 
   ggplot(aes(x = doy, y = catch_per_hour))+
   geom_jitter(width = 0.2, height = 0)+
-  geom_text(data = dat.plot |> filter((catch_per_hour) > 1.3),
-            aes(y = catch_per_hour, x = doy, label = um_total),
-            col = 'blue', nudge_x = 1, nudge_y = -.08)+
+  # geom_text(data = dat.plot |> filter((catch_per_hour) > 1.3),
+  #           aes(y = catch_per_hour, x = doy, label = um_total),
+  #           col = 'blue', nudge_x = 1, nudge_y = -.08)+
   facet_wrap(.~ year, ncol = 1)+ 
   scale_x_continuous(labels = doy_2md)+
   labs(x = "", y = "Chinook caught per hour")+
-  labs(title = "Chinook catch per hour",
-       subtitle = "black numbers = total unmarked catch")+
+  labs(title = "Chinook catch per hour")+
   theme_bw()
 
 
@@ -248,8 +240,7 @@ dat.plot |>
   geom_smooth()+
   labs(x = "", y = "Chinook caught per hour")+
   scale_x_continuous(labels = doy_2md)+
-  labs(title = "Chinook catch per hour",
-       subtitle = "date jittered +/- 5 hours very slightly for readability")+
+  labs(title = "Average Chinook catch per hour")+
   theme_bw()
 
 
@@ -257,16 +248,23 @@ dat.plot |>
 
 Request for "density" plot of above, shaded by year. Density plot is analogous to histogram, so going to try simple smooth approach
 
-
 ```{r}
+
 temp = dat.sum |> select(boat_used, minutes_per_catch) |> 
   mutate(minutes_per_catch = coalesce(minutes_per_catch, Inf))
 
+print("Quantiles for minutes per catch when not on a boat")
 quantile(temp$minutes_per_catch[temp$boat_used=="No"], c(0.001, 0.01, 0.025, 0.05, 0.1, 0.2))
+
+print("Quantiles for minutes per catch when on a boat")
 quantile(temp$minutes_per_catch[temp$boat_used=="Yes"], c(0.001, 0.01, 0.025, 0.05, 0.1, 0.2))
+
+print("boat use vs catch rates of at least 1 fish per hour")
 temp |> 
   group_by(boat_used) |> 
   summarize(prop_at_least_hourly = mean(minutes_per_catch <= 60))
+
+print("boat use vs catch rates of at least 2 fish per 3 hours")
 temp |> 
   group_by(boat_used) |> 
   summarize(prop_at_least_once_per_90 = mean(minutes_per_catch <= 90))
@@ -290,7 +288,7 @@ for(i in 1:length(efficiency)){
                        bank_surveys_remaining = cur.counts |> filter(boat_used == "No") |> pull(n),
                        boat_surveys_lost = cur.loss |> filter(boat_used == "Yes") |> pull(n),
                        bank_surveys_lost = cur.loss |> filter(boat_used == "No") |> pull(n),
-                       )
+  )
 }
 res.df = do.call(bind_rows, res.ls)
 
@@ -298,21 +296,36 @@ res.df = do.call(bind_rows, res.ls)
 ggplot(res.df, aes(x = threshold_efficiency_minutes, y = boat_surveys_remaining))+
   geom_path()+
   ylim(c(0, NA))+
-  ggtitle("Boat surveys with thresholding")
+  ggtitle("# of Boat surveys with thresholding")+
+  labs(x = "Threshold minimum minutes per fish",
+       y = "number of surveys")
 
 ggplot(res.df, aes(x = threshold_efficiency_minutes, y = bank_surveys_remaining))+
   geom_path()+
   ylim(c(0, NA))+
-  ggtitle("Bank surveys with thresholding")
+  ggtitle("# of Bank surveys with thresholding")+
+  labs(x = "Threshold minimum minutes per fish",
+       y = "number of surveys")
+
+ggplot(res.df, aes(x = threshold_efficiency_minutes))+
+  geom_path(aes(y = boat_surveys_remaining, color = 'boat'))+
+  geom_path(aes(y = bank_surveys_remaining, color = 'bank'))+
+  ylim(c(0, NA))+
+  ggtitle("Boat surveys with thresholding")+
+  labs(x = "Threshold minimum minutes per fish",
+       y = "number of surveys",
+       color = "fishing type")
 
 ggplot(res.df, aes(x = threshold_efficiency_minutes, y = bank_surveys_lost + boat_surveys_lost))+
   geom_path()+
-  ggtitle("Total surveys lost with thresholding")
+  ggtitle("Total surveys lost with thresholding")+
+  labs(x = "Threshold minimum minutes per fish",
+       y = "Boat + bank surveys lost")
 
 
 ggplot(res.df, aes(x = threshold_efficiency_minutes, y = (bank_surveys_lost + boat_surveys_lost)/nrow(dat.sum)))+
   geom_path()+
-  ggtitle("Surveys lost with threshold-based filtering")+
+  ggtitle("Total surveys lost with threshold-based filtering")+
   scale_y_continuous(labels = scales::percent)+
   labs(y = "% of surveys removed",
        x = "Threshold minutes per catch")+
@@ -322,10 +335,7 @@ ggplot(res.df, aes(x = threshold_efficiency_minutes, y = (bank_surveys_lost + bo
 
 ```
 
-
-
 ### Catch by duration
-
 
 ```{r}
 dat.sum |> 
@@ -334,7 +344,7 @@ dat.sum |>
   geom_point()+
   geom_smooth()+
   facet_wrap(.~ boat_used)+
-  labs(title = "Encounters by time angling")
+  labs(title = "Encounters by time angling facetd by boat use")
 
 ```
 
@@ -348,7 +358,8 @@ dat.sum |>
   geom_smooth()+
   facet_wrap(.~ boat_used)+
   labs(y = "catch per hour",
-       title = "catch rate as a function of start time")+
+       title = "catch rate as a function of start time",
+       subtitle = "facted by boat use")+
   theme_bw()
 ```
 
@@ -359,16 +370,137 @@ dat.fit |> filter(life_stage == "Adult", fin_mark == "AD") |>
   count(ad_total, boat_used) |> pivot_wider(names_from = boat_used, values_from = n) |> 
   gt() |> 
   tab_caption("# of surveys by marked encounters, split by boat_used")
-  
+
+```
+
+### Catch by time of day
+
+```{r}
+## add fishing duration as an interval
+##note: interval needs the time to be attached to a date. We don't care about the specific dat.
+dummy_dt = ymd_hms("2025-01-01 00:00:00")
+dat.sum <- dat.sum |> 
+  mutate(fishing_start_dt = dummy_dt + fishing_start_time,
+         fishing_end_dt =  dummy_dt + fishing_end_time,
+         fishing_interval = interval(fishing_start_dt,
+                                     fishing_end_dt)) |> 
+  mutate(rownum = 1:nrow(dat.sum))
+## create times to test. doing on the 15 and 45 minutes because reporting is often on
+## the 30 min intervals
+times_test = expand_grid(hour = 1:23,
+                         sep1 = ":", 
+                         minutes = c(15, 45), 
+                         sep2 = ":00" )
+temp = NULL
+for(i in 1:nrow(times_test)){
+  temp = rbind(temp, 
+               paste0(times_test[i,], collapse = ""))
+}
+times_test = hms(as.character(temp))
+
+mean_efficiency_df = data.frame(times = ymd("2025-01-01")+times_test) |> 
+  mutate(mean_catch_per_hour = -99,
+         n = -99)
+for(i in 1:nrow(mean_efficiency_df)){
+  dat.cur = dat.sum |> 
+    filter(mean_efficiency_df$times[i] %within% fishing_interval)
+  mean_efficiency_df$n[i] = nrow(dat.cur)
+  if(nrow(dat.cur)==0){
+    mean_efficiency_df$mean_catch_per_hour[i] = NA
+  } else {
+    mean_efficiency_df$mean_catch_per_hour[i] = mean(dat.cur$catch_per_hour)
+  }
+}
+
+time_labeler = function(x){
+  strftime(x, format = "%H:%M")
+}
+
+ggplot(mean_efficiency_df |> 
+         filter(n>=10),
+       aes(x = times, y = mean_catch_per_hour))+
+  geom_path()+
+  labs(title = "Average Nisqually catch efficiency by time of day",
+       subtitle = "averaged every 30 min across all intervals spanning that time\nskipping times with <5 samples",
+       y = "catch per hour")+
+  scale_x_datetime(date_labels = "%H:%M")
+
+ggplot(dat.sum,
+       aes(y = rownum, x = fishing_start_dt,
+           xend = fishing_end_dt,
+           col = catch_per_hour))+
+  geom_segment()+
+  ggtitle("All fishing intervals coverage")
+
+ggplot(mean_efficiency_df,
+       aes(x = times, y = n))+
+  geom_path()+
+  ggtitle("Fishing interval coverage")
+
+
+
+```
+
+Now separate by bank vs boat
+
+```{r}
+dummy_dt = ymd_hms("2025-01-01 00:00:00")
+dat.sum <- dat.sum |> 
+  mutate(fishing_start_dt = dummy_dt + fishing_start_time,
+         fishing_end_dt =  dummy_dt + fishing_end_time,
+         fishing_interval = interval(fishing_start_dt,
+                                     fishing_end_dt)) |> 
+  mutate(rownum = 1:nrow(dat.sum))
+## create times to test. doing on the 15 and 45 minutes because reporting is often on
+## the 30 min intervals
+times_test = expand_grid(hour = 1:23,
+                         sep1 = ":", 
+                         minutes = c(15, 45), 
+                         sep2 = ":00" )
+temp = NULL
+for(i in 1:nrow(times_test)){
+  temp = rbind(temp, 
+               paste0(times_test[i,], collapse = ""))
+}
+times_test = hms(as.character(temp))
+
+mean_efficiency_df = expand_grid(times = ymd("2025-01-01")+times_test,
+                                 boat_used = c("Yes", "No")) |> 
+  mutate(mean_catch_per_hour = -99,
+         n = -99)
+for(i in 1:nrow(mean_efficiency_df)){
+  dat.cur = dat.sum |> 
+    filter(mean_efficiency_df$times[i] %within% fishing_interval) |> 
+    filter(boat_used == mean_efficiency_df$boat_used[i])
+  mean_efficiency_df$n[i] = nrow(dat.cur)
+  if(nrow(dat.cur)==0){
+    mean_efficiency_df$mean_catch_per_hour[i] = NA
+  } else {
+    mean_efficiency_df$mean_catch_per_hour[i] = mean(dat.cur$catch_per_hour)
+  }
+}
+
+time_labeler = function(x){
+  strftime(x, format = "%H:%M")
+}
+
+ggplot(mean_efficiency_df |> 
+         filter(n>=10),
+       aes(x = times, y = mean_catch_per_hour))+
+  geom_path()+
+  facet_wrap(.~boat_used)+
+  labs(title = "Average Nisqually catch efficiency by time of day by boat used",
+       subtitle = "averaged every 30 min across all intervals spanning that time\nskipping times with <5 samples",
+       y = "catch per hour")+
+  scale_x_datetime(date_labels = "%H:%M")
 ```
 
 
-
+::::::
 
 ## Simple gam model
 
 We fit a generalized additive model with fixed effect of fin_mark and fishing duration, random effect of year, and smooth across day of year that differs by fin_mark. We assume a negative binomial distribution (more on that later).
-
 
 ::: panel-tabset
 ```{r}
@@ -377,33 +509,73 @@ We fit a generalized additive model with fixed effect of fin_mark and fishing du
 dat.fit = dat.fit |> 
   mutate(mark_stage = as.factor(paste0(fin_mark, " X ", life_stage)))
 
-out = gam(fish_count ~ mark_stage +
-            s(doy, by = mark_stage, k = 20) + 
-            s(yearfac, bs = 're') + 
+out = gam(fish_count ~ fin_mark*life_stage +
+            boat_used + 
+            s(doy, by = fin_mark, k = 20) + 
+            yearfac + 
             angler_minutes,
           method = "REML",
           family = "nb",
           data = dat.fit)
 
-# draw(out)
+out.2 = gam(fish_count ~ fin_mark +
+              boat_used + 
+              s(doy, by = fin_mark, k = 20) + 
+              yearfac + 
+              angler_minutes,
+            method = "REML",
+            family = "nb",
+            data = dat.fit)
 
-gp.seasonality = conditional_values(
-  out,
-  condition = c("doy", "mark_stage", "yearfac")
-) |> 
-  draw()+
-  scale_x_continuous(limits = c(200, 300),
-                     labels = doy_2md)+
-  scale_y_continuous(limits = c(0, .5))+
-  facet_wrap(.~ yearfac)+
-  labs(x = "",
-       y = "Predicted encounters per hour",
-       title = "Seasonality of encounters, same shape per year")+
-  theme_bw(base_size = 14)
+out.3 = gam(fish_count ~ fin_mark + life_stage +
+              boat_used + 
+              s(doy, by = fin_mark, k = 20) + 
+              yearfac + 
+              angler_minutes,
+            method = "REML",
+            family = "nb",
+            data = dat.fit)
 
-gp.seasonality
 
+AIC(out, out.2, out.3)
+anova(out)
+## okay, model "out" is the best
+## 
+## Do we want separate smooths by lifestage as well as fin mark?
+
+
+out.0 = gam(fish_count ~ fin_mark*life_stage +
+              boat_used + 
+              s(doy, by = mark_stage, k = 20) + 
+              yearfac + 
+              angler_minutes,
+            method = "REML",
+            family = "nb",
+            data = dat.fit)
+
+AIC(out, out.0)
+anova(out, out.0)
+
+# Nope, we want our smooth to just be
+# 
+# gp.seasonality = conditional_values(
+#   out,
+#   condition = c("doy", "mark_stage", "yearfac")
+# ) |> 
+#   draw()+
+#   scale_x_continuous(limits = c(200, 300),
+#                      labels = doy_2md)+
+#   scale_y_continuous(limits = c(0, .5))+
+#   facet_wrap(.~ yearfac)+
+#   labs(x = "",
+#        y = "Predicted encounters per hour",
+#        title = "Seasonality of encounters, same shape per year")+
+#   theme_bw(base_size = 14)
+# 
+# gp.seasonality
 ```
+
+Let's try a different model structure: a 3d smooth where two of those are factors. 
 
 ```{r}
 ## GAM model -------------------------------------------
@@ -411,14 +583,23 @@ gp.seasonality
 dat.fit = dat.fit |> 
   mutate(mark_stage = as.factor(paste0(fin_mark, " X ", life_stage)))
 
-out.yearly = gam(fish_count ~ 
+out.yearly = gam(fish_count ~ boat_used +
                    te(doy, mark_stage, yearfac, bs = c('tp', 'fs', 'fs')) + 
-                   # s(yearfac, bs = 're') + 
                    angler_minutes,
                  method = "REML",
                  family = "nb",
                  data = dat.fit)
 
+AIC(out, out.yearly)
+anova(out,
+      out.yearly,
+      test = "Chisq")
+```
+
+We have the best support so far for this complex model, and it's not even close. What do our 
+encounters-per-hour look like?
+
+```{r}
 # draw(out)
 
 gp.seasonality = conditional_values(
@@ -431,7 +612,7 @@ gp.seasonality = conditional_values(
   scale_y_continuous(limits = c(0, .5))+
   facet_wrap(.~ yearfac)+
   labs(x = "",
-       y = "Predicted encounters per hour",
+       y = "Predicted encounters per hour, complex smooths",
        title = "Seasonality of encounters, different shapes each year")+
   theme_bw(base_size = 14)
 
@@ -439,13 +620,17 @@ gp.seasonality
 
 ## Checking results, as they don't match Evan's bar plots
 
+```
+
+```{r}
+
 dat.fit$pred = as.numeric(predict(out.yearly, newdata = dat.fit, type = "response"))
 
 dat.fit |> 
   mutate(doy = yday(event_date)) |> 
-ggplot(aes(x = doy, y = pred, col = mark_stage))+
+  ggplot(aes(x = doy, y = pred, col = mark_stage))+
   geom_jitter(width = 0, height = 0.2)+
-  facet_wrap(.~ year)+
+  facet_grid(cols = vars(year), rows = vars(boat_used))+
   scale_x_continuous(labels = doy_2md)
 
 ## Okay, what about a "generic" trip
@@ -453,23 +638,25 @@ ggplot(aes(x = doy, y = pred, col = mark_stage))+
 dat.pred = expand_grid(doy = seq(min(dat.fit$doy), max(dat.fit$doy), by = 1),
                        mark_stage = factor("AD X Adult", levels = levels(dat.fit$mark_stage)),
                        yearfac = unique(dat.fit$yearfac),
+                       boat_used = c("No", "Yes"),
                        angler_minutes = 120
-                       )
+)
 
 dat.pred$count_predicted = as.numeric(predict(out.yearly, newdata = dat.pred, type = "response"))
 
 dat.pred |> 
-ggplot(aes(x = doy, y = count_predicted, col = mark_stage))+
+  ggplot(aes(x = doy, y = count_predicted, col = mark_stage))+
   geom_point()+
-  facet_wrap(.~ yearfac)+
+  facet_grid(cols = vars(yearfac), rows = vars(boat_used))+
   scale_x_continuous(labels = doy_2md)+
   theme_bw(base_size = 13)+
-  labs(x = "", title = "Daily predictions for 2 angler-hours")
+  labs(x = "", title = "Daily predictions for 2 angler-hours by boat fishing")
 
 dat.pred |> 
-ggplot(aes(x = doy, y = count_predicted, col = yearfac, fill = yearfac))+
+  ggplot(aes(x = doy, y = count_predicted, col = yearfac, fill = yearfac))+
   geom_polygon(alpha = 0.2)+
   geom_path()+
+  facet_grid(.~ boat_used)+
   scale_x_continuous(labels = doy_2md)+
   theme_bw(base_size = 13)+
   labs(x = "", title = "Daily predictions for 2 angler-hours")
@@ -478,14 +665,13 @@ ggplot(aes(x = doy, y = count_predicted, col = yearfac, fill = yearfac))+
 dat.fit |> 
   group_by(year, doy) |> 
   summarise(angler_hours = sum(angler_minutes)/60) |> 
-ggplot(aes(x = doy, y = angler_hours, col = as.factor(year), fill = as.factor(year)))+
+  ggplot(aes(x = doy, y = angler_hours, col = as.factor(year), fill = as.factor(year)))+
   # geom_col(alpha = 0.2)+
   geom_smooth()+
   scale_x_continuous(labels = doy_2md)+
   theme_bw(base_size = 13)
 
 ```
-
 
 ```{r}
 dat.fit |> 
@@ -522,7 +708,6 @@ gp.time = dat.fit |>
 gp.ad / gp.time
 ```
 
-
 What is our total time breakdown by hour?
 
 ```{r}
@@ -541,13 +726,13 @@ dat.fit |>
 ```
 
 Angler minutes across seasons
+
 ```{r}
 ggplot(dat.fit, aes(x = doy, y = angler_minutes))+
   geom_jitter(width = 0.2, height = 0.2)+
   scale_x_continuous(labels = doy_2md)+
   facet_wrap(.~ yearfac)
 ```
-
 
 ```{r}
 out.yearly.boatly = gam(fish_count ~ 
@@ -577,9 +762,20 @@ out.yearly.boatly3 = gam(fish_count ~
 AIC(out, out.yearly, out.yearly.boatly, out.yearly.boatly2, out.yearly.boatly3)
 ```
 
-We see the most support for a model that allows smooths to vary by year and accounts for boat effect -- both as a fixed effect (boat anglers caught more regardless of trip length) and interacting with angler minutes (After accounting for the general boat effect, boat anglers gained less by having longer trips than non-boat anglers).
+We see the most support for a model that allows smooths to vary by year and accounts for boat effect -- both as a fixed effect (boat anglers caught more regardless of trip length) and interacting with angler minutes (After accounting for the general boat effect, boat anglers gained less by having longer trips than non-boat anglers). We are going to move foreward with this as our best model.
 
-Out of curiosity, how much does boat effect matter?
+```{r}
+out.best = out.yearly.boatly3
+```
+
+
+In simple english, the model is estimating how many fish of each mark-stage (UM vs AD and legal vs sublegal) we expect to see from a given survey while:
+- accounting for whether or not the anglers are on a boat
+- accounting for how long the anglers were fishing
+- counts minutes of angling differently if those were on a boat or on the bank
+- Accounting for the day of year and the year
+
+Out of curiosity, how much does use of boat effect matter?
 
 ```{r}
 coef(out.yearly.boatly)[2:3]
@@ -591,13 +787,15 @@ That's a huge difference. How many minutes of fishing does boating count as?
 temp = coef(out.yearly.boatly)[2]/coef(out.yearly.boatly)[3]
 ```
 
-A lot! `r round(temp/60, 1)` hours! That means the model predicts that a single angler on a boat fishing for an hour would have the same catch as a group of 5 anglers fishing for 6 hours.
+A lot! `r round(temp/60, 1)` hours! 
 
 Let's look at the partial sum of predictors for a boat-user who fished for 60 minutes:
+
 ```{r}
 sum(coef(out.yearly.boatly)[2:3]*c(1,60))
 ```
 
+This means the model predicts that a single angler on a boat fishing for an hour would have the same catch as a group of 5 anglers fishing from the bank for 6 hours.
 
 Quick look at benefits of boating and time on the water:
 
@@ -608,7 +806,7 @@ dat.pred.1 = expand_grid(doy = mean(dat.fit$doy),
                          angler_minutes = seq(min(dat.fit$angler_minutes), max(dat.fit$angler_minutes),
                                               by = 1),
                          boat_used = unique(dat.fit$boat_used))
-dat.pred.1$predicted_count = as.numeric(predict(out.yearly.boatly3, newdata = dat.pred.1, type = "response"))
+dat.pred.1$predicted_count = as.numeric(predict(out.best, newdata = dat.pred.1, type = "response"))
 
 ggplot(dat.pred.1, aes(x = angler_minutes, y = predicted_count))+
   geom_path()+
@@ -617,8 +815,6 @@ ggplot(dat.pred.1, aes(x = angler_minutes, y = predicted_count))+
   labs(y = "predicted AD encounters",
        title = "angler efficiency by time and boat status")
 ```
-
-
 
 ### model diagnostics
 
@@ -644,7 +840,6 @@ testDispersion(simulationOutput)
 testZeroInflation(simulationOutput)
 ```
 
-
 These seem fine -- we are not seeing any signs of problems
 
 #### Separate shape model
@@ -669,20 +864,61 @@ testZeroInflation(simulationOutput)
 
 These seem fine -- we are not seeing any signs of problems
 
+#### Best model
+
+First we check the model diagnostics
+
+```{r}
+gam.check(out.best, rep = 500)
+```
+
+These are not informative, although the k' being twice the edf suggests we likely aren't running too little flexibility (although this can be hard to parse given the high dimensionality).
+
+```{r}
+simulationOutput = simulateResiduals(fittedModel = out.best, plot = F)
+plot(simulationOutput)
+testOutliers(simulationOutput, type = "bootstrap")
+testDispersion(simulationOutput)
+testZeroInflation(simulationOutput)
+```
+
+### Final model
+
+
+
 ### calculating predicted distributions
 
 ```{r}
-dat.fit$fish_count_predicted = as.numeric(predict(out, newdata = dat.fit, type = "response"))
+nbinom_prob_helper = function(x){dnbinom(0:30, size = cur.theta, mu = x)}
+
+calc_probs_nbinom = function(mod, 
+         dat.new,
+         identifier.name = NULL){
+mus = predict(mod, newdata = dat.new, type = "response")
+cur.theta = mod$family$getTheta(TRUE)
+df = data.frame(mu = mus)|> 
+  mutate(mat = do.call(rbind, purrr::map(mu, nbinom_prob_helper)))
+df.prob = as.data.frame(df$mat)
+names(df.prob) = 0:(ncol(df.prob)-1)
+df.prob |> 
+  mutate(row_number = 1:nrow(df.prob),
+         .before = "0") |> 
+  pivot_longer(cols = !any_of("row_number"),
+               names_to = "fish_count",
+               values_to = "prob")
+}
+
+calc_probs_nbinom(out.best, dat.fit)
+
+dat.fit$fish_count_predicted = as.numeric(predict(out.best, newdata = dat.fit, type = "response"))
 dat.fit = dat.fit |>
   mutate(fish_count_predicted_int = round(fish_count_predicted))
 
 
 ## Looking at predicted vs observed distributions of gam model ==================
 
-## Returning to our simple gam model: 
-
-mus = predict(out, newdata = dat.fit, type = "response")
-cur.theta = out$family$getTheta(TRUE)
+mus = predict(out.best, newdata = dat.fit, type = "response")
+cur.theta = out.best$family$getTheta(TRUE)
 
 # dnbinom(0:10, size = cur.theta, mu = mus[1])
 
@@ -706,10 +942,6 @@ df.pred <- dat.fit |>
 ## for marked and unmarked fish, *accounting* for the variability in negative binomials
 
 freq.pred = df.pred |> 
-  group_by(fin_mark, predicted_count) |> 
-  summarize(expected_frequency = sum(predicted_probability)) |> 
-  ungroup() |> 
-  ## adding rounding categorizations
   mutate(round_cat1 = case_when(
     predicted_count >= 3 & predicted_count <= 7 ~ "3-7",
     predicted_count >= 8 & predicted_count <= 12 ~ "8-12",
@@ -720,176 +952,109 @@ freq.pred = df.pred |>
     predicted_count >= 3 & predicted_count <= 7 ~ "3-7",
     predicted_count >= 8 ~ "8+"
   )) |> 
-  mutate(round_cat2 = factor(round_cat2, levels = c("3-7", "8+")))
+  mutate(round_cat2 = factor(round_cat2, levels = c("3-7", "8+"))) |> 
+  group_by(mark_stage, predicted_count, round_cat1, round_cat2) |> 
+  summarize(expected_frequency = sum(predicted_probability)) |> 
+  ungroup() 
+## adding rounding categorizations
 
-## basic plotting ================================
-
-gp.fit = dat.fit |> 
-  filter(fin_mark == "AD") |> 
-  count(fish_count) |> 
-  ggplot(aes(x = fish_count, y = n))+
-  geom_col()+
-  xlim(c(-1,11))+
-  ggtitle("Observed counts of AD fish")+
-  theme_bw(base_size = 14)
-
-gp.pred = freq.pred |> 
-  filter(fin_mark == "AD") |> 
-  ggplot(aes(x = predicted_count, y = expected_frequency))+
-  geom_col()+
-  ggtitle("Predicted counts of AD fish")+
-  xlim(c(-1,11))+
-  theme_bw(base_size = 14)
-
-freq.pred |> 
-  ggplot(aes(x = predicted_count, y = expected_frequency))+
-  geom_col()+
-  ggtitle("")+
-  xlim(c(-1,11))+
-  facet_wrap(. ~fin_mark)+
-  labs(y = "Expected # of interviews",
-       x = "reported encounters")+
-  theme_bw(base_size = 18)
-
-
-## AD marked
+## plotting frequency breakdown ================================
 
 pred.partial = freq.pred |> 
-  filter(fin_mark == "AD") |> 
-  group_by(predicted_count) |> 
+  group_by(predicted_count, mark_stage) |> 
   summarize(expected_frequency = sum(expected_frequency)) |> 
   ungroup() |> 
   mutate(scenario = "prediction") |> 
   rename(fish_count = predicted_count, frequency = expected_frequency)
-
 obs.partial = dat.fit |> 
-  filter(fin_mark == "AD") |> 
-  count(fish_count) |>
+  count(fish_count, mark_stage) |>
   rename(frequency = n) |>
   ##fill in 0s
-  full_join(expand_grid(fish_count = seq(0, max(dat.fit$fish_count), by = 1)
+  full_join(expand_grid(fish_count = seq(0, max(dat.fit$fish_count), by = 1),
+                        mark_stage = unique(dat.fit$mark_stage)
   )) |> 
   mutate(frequency = if_else(is.na(frequency),
                              0,
                              frequency)) |> 
   mutate(scenario = "observation")
 
-gp.cur = bind_rows(pred.partial, obs.partial) |> 
+freq.df = bind_rows(pred.partial, obs.partial)
+
+max.obs.count = obs.partial |> 
+  filter(frequency>0) |> 
+  pull(fish_count) |> 
+  max()
+
+freq.df |> 
   ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
   geom_col(position = "dodge2", width = .6)+
-  ggtitle("AD catch frequencies")+
-  xlim(c(-1,21))+
+  facet_wrap(.~ mark_stage)+
+  ggtitle("Catch frequencies (observed vs predicted)")+
   labs(subtitle = "using negbin model")+
+  xlim(-.5,5)+
   theme_bw(base_size = 14)
 
-gp.cur
-
-
-gp.cur = bind_rows(pred.partial, obs.partial) |> 
+freq.df |> 
   filter(fish_count > 0) |> 
   ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
   geom_col(position = "dodge2", width = .6)+
-  ggtitle("AD catch frequencies (skipping 0s to provide more clarity)")+
+  facet_wrap(.~ mark_stage)+
+  ggtitle("Catch frequencies (observed vs predicted)")+
   labs(subtitle = "using negbin model")+
-  xlim(c(0,21))+
+  xlim(.5,max.obs.count)+
   theme_bw(base_size = 14)
 
-gp.cur
 
+## Alternate breakdown: verifiable vs not
 
-## Unmarked
+freq.df.verifiable <- freq.df |>
+  mutate(status = if_else(mark_stage == "AD X Adult",
+                          "Verifiable",
+                          "Unverifiable")) |> 
+  group_by(fish_count, status, scenario) |> 
+  summarize(frequency = sum(frequency)) |> 
+  ungroup()
 
-pred.partial = freq.pred |> 
-  filter(fin_mark == "UM") |> 
-  group_by(predicted_count) |> 
-  summarize(expected_frequency = sum(expected_frequency)) |> 
-  ungroup() |> 
-  mutate(scenario = "prediction") |> 
-  rename(fish_count = predicted_count, frequency = expected_frequency)
-
-obs.partial = dat.fit |> 
-  filter(fin_mark == "UM") |> 
-  count(fish_count) |>
-  rename(frequency = n) |>
-  ##fill in 0s
-  full_join(expand_grid(fish_count = seq(0, max(dat.fit$fish_count), by = 1)
-  )) |> 
-  mutate(frequency = if_else(is.na(frequency),
-                             0,
-                             frequency)) |> 
-  mutate(scenario = "observation")
-
-gp.cur = bind_rows(pred.partial, obs.partial) |> 
-  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
-  geom_col(position = "dodge2", width = .6)+
-  ggtitle("UM catch frequencies")+
-  xlim(c(-1,21))+
-  labs(subtitle = "from `preliminary-catch-model.R`, using negbin model")+
-  theme_bw(base_size = 14)
-
-gp.cur
-
-gp.cur = bind_rows(pred.partial, obs.partial) |> 
+freq.df.verifiable |> 
   filter(fish_count > 0) |> 
   ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
   geom_col(position = "dodge2", width = .6)+
-  xlim(c(0,21))+
-  ggtitle("UM catch frequencies (skipping 0s to provide more clarity)")+
-  labs(subtitle = "from `preliminary-catch-model.R`, using negbin model")+
+  facet_wrap(.~ status)+
+  ggtitle("Catch frequencies (observed vs predicted)")+
+  labs(subtitle = "Verifiable = AD Adult; Unverifiable = all else")+
+  xlim(.5,max.obs.count)+
   theme_bw(base_size = 14)
-
-gp.cur
-
-gp.cur = bind_rows(pred.partial, obs.partial) |> 
-  filter(fish_count > 4) |> 
-  ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
-  geom_col(position = "dodge2", width = .6)+
-  xlim(c(4,21))+
-  ggtitle("UM catch frequencies (skipping <5s to provide more clarity)")+
-  labs(subtitle = "from `preliminary-catch-model.R`, using negbin model")+
-  theme_bw(base_size = 14)
-
-gp.cur
-
 
 ```
 
 ### a quick interpretation aside:
 
-Does that one observation of 16 unmarked fish stand out? Well, the model thinks we have a small but decreasing probability of reports of more than 10 unmarked encounters. In total, how many people to we expect to have more than 10 unmarked fish?
+Does the observations of high AD X Adult stand out? Well, the model thinks we have a small but decreasing probability of reports of more than 10 AD X Adult encounters. In total, how many people to we expect to have more than 10 AD X Adult fish?
 
 ```{r}
 ## quick thoughts:
 freq.pred |> 
-  filter(fin_mark == "UM") |> 
+  filter(mark_stage == "AD X Adult") |> 
   filter(predicted_count > 10) |> 
   pull(expected_frequency) |> 
   sum()
 
 ```
 
-About 3. So having one observation in that range is not surprising.
-
-#### more aside
-
-But the model thinks we should have at least 3 people reporting more than 10 fish, and we only had 1!
-
-Isn't that a problem?
-
-Not really. As we move far away from our actual data, I don't put high trust in the exact values of the model predictions. There's some math involved, but instead we can imagine that we're tiny model goblins in charge of determining the frequencies we should see for different fish counts. We know the frequencies should fall as we get to higher and higher fish counts, but how rapidly should they fall? Well, past 10 fish, we only have one actual data point, so we are mostly guessing based on the rate of fall in the smaller fish counts. If we get that rate of fall incorrect, the predicted frequencies of fish_counts in the 20s and 30s might be off, but as long as those predictions are small our data will still seem to be a pretty good match to the predictions.
-
-As an example of this in practice, the model thinks there's a 10% chance of having one person someone reporting between 50 and 100 encountered across all the interviews in this dataset.
+We expect to see about 2. And how many do we see?
 
 ```{r}
-foo <- function(x){dnbinom(50:100, size = cur.theta, mu = x)}
-df = data.frame(mu = mus)|> 
-  mutate(mat = do.call(rbind, purrr::map(mu, foo)))
-sum(df$mat)
+## quick thoughts:
+obs.partial |> 
+  filter(mark_stage == "AD X Adult") |> 
+  filter(fish_count > 10) |> 
+  pull(frequency) |> 
+  sum()
 ```
 
-Biologically this seems pretty impossible, but this isn't really a failing of the model. Instead, the problem is that we're using model inferences far from values represented in the data we used to fit the model. We should avoid doing that.
+2. So that's actually EXACTLY what we expect to see.
 
-### returning from the aised: how do our fish counts compare?
+### returning from the aside: how do our fish counts compare?
 
 ```{r}
 cat("Total fish in our data")
@@ -898,48 +1063,46 @@ cat("Total fish predicted from our model")
 sum(freq.pred$predicted_count * freq.pred$expected_frequency)
 ```
 
-We're in the same ballpark, so probably fine.
+We're in the same ballpark.
 
 ### Rounding bias
 
 ```{r}
 ## Looking at rounding bias ===============================
-obs.partial = dat.fit |> 
-  count(fin_mark, fish_count) |> 
-  rename(frequency = n) |> 
+
+freq.df.verifiable |> 
   filter(fish_count %in% c(5, 10, 15, 20)) |> 
-  ## adding 0s where missing
-  full_join(expand_grid(fin_mark = c("AD", "UM"), 
-                        fish_count = c(5, 10, 15, 20))
-  ) |> 
-  mutate(frequency = if_else(is.na(frequency),
-                             0,
-                             frequency)) |> 
-  mutate(scenario = "observation")
+  pivot_wider(names_from = scenario, values_from = frequency) |> gt()
+```
 
-pred.partial = freq.pred |> 
-  filter(predicted_count %in% c(5, 10, 15, 20)) |> 
-  mutate(scenario = "prediction") |> 
-  select(fin_mark, fish_count = predicted_count, frequency = expected_frequency, scenario)
+This alone looks like strong evidence against rounding bias. But we can also look at the breakdown of observation and predictions in each "rounding category". 
 
-bind_rows(obs.partial, pred.partial) |> 
+```{r}
+freq.df.verifiable |> 
+  filter(fish_count %in% c(5, 10, 15, 20)) |> 
   ggplot(aes(x = as.factor(fish_count), y = frequency, fill = scenario))+
   geom_col(position = "dodge2")+
   labs(x = "Fish reported",
        title = "Looking for rounding bias: comparing frequencies")+
-  facet_wrap(.~ fin_mark, ncol = 1)+
+  facet_wrap(.~ status, ncol = 1)+
   theme_bw(base_size = 14)
 
 ## let's look at predictions vs obs by category
 
 obs.partial = dat.fit |> 
-  count(fin_mark, round_cat1) |> 
+  mutate(status = if_else(mark_stage == "AD X Adult",
+                          "Verifiable",
+                          "Unverifiable")) |> 
+  count(status, round_cat1) |> 
   rename(frequency = n) |> 
   mutate(scenario = "observation") |> 
   na.omit()
 
 pred.partial = freq.pred |> 
-  group_by(fin_mark, round_cat1) |> 
+  mutate(status = if_else(mark_stage == "AD X Adult",
+                          "Verifiable",
+                          "Unverifiable")) |> 
+  group_by(status, round_cat1) |> 
   summarize(frequency = sum(expected_frequency)) |> 
   ungroup() |> 
   mutate(scenario = "prediction") |> 
@@ -950,19 +1113,25 @@ bind_rows(obs.partial, pred.partial) |>
   geom_col(position = "dodge2")+
   labs(x = "Rounding category",
        title = "Looking for rounding bias: comparing within categories")+
-  facet_wrap(.~ fin_mark, ncol = 1)+
+  facet_wrap(.~ status, ncol = 1)+
   theme_bw(base_size = 14)
 
 ## let's look at predictions vs obs by category
 
 obs.partial = dat.fit |> 
-  count(fin_mark, round_cat2) |> 
+  mutate(status = if_else(mark_stage == "AD X Adult",
+                          "Verifiable",
+                          "Unverifiable")) |> 
+  count(status, round_cat2) |> 
   rename(frequency = n) |> 
   mutate(scenario = "observation") |> 
   na.omit()
 
 pred.partial = freq.pred |> 
-  group_by(fin_mark, round_cat2) |> 
+  mutate(status = if_else(mark_stage == "AD X Adult",
+                          "Verifiable",
+                          "Unverifiable")) |> 
+  group_by(status, round_cat2) |> 
   summarize(frequency = sum(expected_frequency)) |> 
   ungroup() |> 
   mutate(scenario = "prediction") |> 
@@ -973,7 +1142,7 @@ bind_rows(obs.partial, pred.partial) |>
   geom_col(position = "dodge2")+
   labs(x = "Rounding category",
        title = "Looking for rounding bias: comparing within categories (2)")+
-  facet_wrap(.~ fin_mark, ncol = 1)+
+  facet_wrap(.~ status, ncol = 1)+
   theme_bw(base_size = 14)
 
 ```
@@ -985,70 +1154,50 @@ bind_rows(obs.partial, pred.partial) |>
 facet_names = c(`TRUE` = "Had kept fish",
                 `FALSE` = "Did not have kept fish")
 
-pred.partial = df.pred |> 
-  filter(fin_mark == "UM") |> 
-  group_by(predicted_count, had.kept) |> 
-  summarize(expected_frequency = sum(predicted_probability)) |> 
-  ungroup() |> 
-  mutate(scenario = "prediction") |> 
-  rename(fish_count = predicted_count, frequency = expected_frequency)
-
-obs.partial = dat.fit |> 
-  filter(fin_mark == "UM") |> 
-  count(had.kept, fish_count) |>
-  rename(frequency = n) |>
-  ##fill in 0s
-  full_join(expand_grid(had.kept = as.factor(c(TRUE, FALSE)), 
-                        fish_count = seq(0, max(dat.fit$fish_count), by = 1)
-  )) |> 
-  mutate(frequency = if_else(is.na(frequency),
-                             0,
-                             frequency)) |> 
-  mutate(scenario = "observation")
-
-
-bind_rows(pred.partial, obs.partial) |> 
+freq.df.verifiable |> 
   # filter(fish_count > 0) |>
   ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
   geom_col(position = "dodge2", width = .6)+
-  facet_wrap(.~ had.kept, labeller = as_labeller(facet_names),
+  facet_wrap(.~ status,
              ncol = 1, scale = "free_y") +
   xlim(c(-1, 20))+
-  ggtitle("UM catch frequencies")+
+  ggtitle("Catch frequencies")+
   labs(subtitle = "excluding 0s for visual clarity")+
   theme_bw(base_size = 14)
 
-bind_rows(pred.partial, obs.partial) |>
+freq.df.verifiable |> 
   filter(fish_count > 0) |>
   ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
   geom_col(position = "dodge2", width = .6)+
-  facet_wrap(.~ had.kept, labeller = as_labeller(facet_names),
+  facet_wrap(.~ status,
              ncol = 1, scale = "free_y") +
   xlim(c(NA, 20))+
-  ggtitle("UM catch frequencies")+
+  ggtitle("Catch frequencies")+
   labs(subtitle = "excluding 0s for visual clarity")+
   theme_bw(base_size = 14)
 
 
-bind_rows(pred.partial, obs.partial) |>
+freq.df.verifiable |> 
   filter(fish_count > 4) |>
   ggplot(aes(x = fish_count, y = frequency, fill = scenario))+
   geom_col(position = "dodge2", width = .6)+
-  facet_wrap(.~ had.kept, labeller = as_labeller(facet_names),
+  facet_wrap(.~ status,
              ncol = 1, scale = "free_y") +
   xlim(c(NA, 20))+
-  ggtitle("UM catch frequencies")+
+  ggtitle("Catch frequencies")+
   labs(subtitle = "excluding <5s for visual clarity")+
   theme_bw(base_size = 14)
 ```
 
-That does not look like the high residuals were associated just with "did not have kept fish". In fact, the discrepency between prediction and obs seems even larger for the "had kept fish" category.
+It does not look like we have anglers reporting surprisingly high #s of unverifiable catch.
 
 :::
 
 ## Zero-inflated model
 
 Our model above looks like it may have had dispersion issues. Note that it is important that we try to find a model that correctly represents dispersion, as we're trying to look at the mismatch between observations and expectations for a range of fish_counts, including large fish_counts.
+
+Complication: the tensor product smooth we use in our best model is not something that is supported by glmmTMB. Instead, we use the more limited zero-inflation support of `mgcv`. See here: https://fromthebottomoftheheap.net/2017/05/04/compare-mgcv-with-glmmtmb/. We use the `ziplss` family in mgcv, which implements a two-stage zero inflated Poisson model. This means that the model will not allow overdispersion within the presence data.
 
 ### Model comparisons
 
@@ -1058,22 +1207,95 @@ If our model is too constrained in terms of dispersion, we may be "forcing" disc
 -   Is dispersion different between marked and unmarked fish?
 -   Should we be using a different version of the negative binomial? e.g. scaling quadratically rather than linearly with the sum of our predictors?
 
-Here I test a series of model structures to see what has the best support using AIC (for AIC, the lowest is the best.
+Here I test a series of model structures to see what has the best support using AIC (for AIC, the lowest is the best).
+
+```{r}
+## Reminder: current best model:
+## out.yearly.boatly3 = gam(fish_count ~ 
+# te(doy, mark_stage, yearfac, bs = c('tp', 'fs', 'fs')) + 
+# angler_minutes*boat_used,
+# method = "REML",
+# # family = "nb",
+# data = dat.fit)
+
+
+## Zero-inflated model ----------------------------------
+# #had to tweak the following to simplify the zero-inflated formula in order to ensure convergence
+
+out.best.zi1 = gam(list(fish_count ~
+                           te(doy, mark_stage, yearfac, bs = c('tp', 'fs', 'fs')) +
+                           angler_minutes*boat_used,
+                       ~s(doy) + yearfac + mark_stage + angler_minutes*boat_used
+                       ),
+                         method = "REML",
+                         family = "ziplss",
+                         data = dat.fit)
+out.best.zi1$outer.info
+
+AIC(out.best, out.best.zi1)
+```
+
+We see some support for the zero-inflated model over the negative binomial one. I'm a bit skeptical on this front, though. First, from a practical standpoint, working with the zero-inflated model is much messier. For example, simply predicting expectations is not trivial. Second, it is easy to run into overfitting issues, especially given that the zero-inflated machinery is often less robust. From the mgcv help on the zero inflated models (`?mgcv::ziplss`):
+
+> WARNINGS
+>
+> Zero inflated models are often over-used. Having many zeroes in the data does not in itself imply zero inflation. Having too many zeroes *given the model mean* may imply zero inflation.
+
+However, we can take a look at how the frequencies of this compare can try moving forward with this. What does our frequency of counts look like?
 
 ```{r}
 
-## Zero-inflated model ----------------------------------
-# Looking at the predicted vs observed distributions of UM and AD, it looks like we're running into differing dispersion. 
-# I think the best method is to try to account for this with a zero-inflated model
+## from above, for reference
+# mus = predict(out.best, newdata = dat.fit, type = "response")
+# cur.theta = out.best$family$getTheta(TRUE)
+# 
+# # dnbinom(0:10, size = cur.theta, mu = mus[1])
+# 
+# foo <- function(x){dnbinom(0:30, size = cur.theta, mu = x)}
+# df = data.frame(mu = mus)|> 
+#   mutate(mat = do.call(rbind, purrr::map(mu, foo)))
+# 
+# df.pred = as.data.frame(df$mat)
+# #gros names for a sec:
+# names(df.pred) = 0:30  
+# ## now combine with the data and use pivoting to put into handy form
+# df.pred <- dat.fit |> 
+#   select(-fish_count_predicted, -fish_count_predicted_int) |> 
+#   cbind(df.pred) |> 
+#   pivot_longer(cols = "0":"30",
+#                names_to = "predicted_count",
+#                values_to = "predicted_probability") |> 
+#   mutate(predicted_count = as.numeric(predicted_count))
 
 
-# Let's check out the nbinom2 family in glmmTMB
-#
-library(glmmTMB)
+pred.temp = predict(out.best.zi1, newdata = dat.fit)
+
+## From https://fromthebottomoftheheap.net/2017/05/04/compare-mgcv-with-glmmtmb/
+##The first column is the predicted value of the response from the Poisson part of the model on the scale of the linear predictor (the log scale). The second column is the predicted value from the zero-inflation component and is on the complementary log-log scale. Both of these need to be back transformed to the respective response scales and then multiplied together. To do this for the zero-inflation part, I copied the code from the base R binomial() family with the appropriate link specified. The second line of code below adds the predicted values for each combination of mined and spp to the prediction data object. Note that each component is back-transformed using the appropriate link, and then multiplied together.
+ilink <- binomial(link = "cloglog")$linkinv
+dat.fit = transform(dat.fit, 
+                 count_predicted_zi = exp(pred.temp[,1]) * ilink(pred.temp[,2]) )
+
+## Okay, now we want to calculate our probabilities of different catches
+## basic idea is that the vector takes the two 'predict' terms for a data point (the first is the poisson part on a log scale, the second is the probability of non-zero on cloglog scale) and calculates the probability of seeing 
+foo <-  function(x1, x2){
+  d0 = 1 - ilink(x2) ## ilink(x2) should give the probability of non-zero
+  drest = dpois(1:30, lambda = exp(x1)) * (1-d0) ##multiply by probability of non-zero
+  return(c(d0, drest))
+}
+
+df = data.frame(mu = mus)|>
+  mutate(mat = do.call(rbind, purrr::map(mu, foo)))
+
+
+```
+
+
+```{r}
 
 df.models = NULL
 
-out.tmba = glmmTMB(fish_count ~ s(doy, fin_mark, bs = 'fs', k = 20) + fishing_duration_minutes + (1 | yearfac),
+out.tmba = glmmTMB(fish_count ~ mark_stage + s(doy) + angler_minutes*boat_used,
                    family = nbinom1,
                    REML = TRUE,
                    data = dat.fit)

@@ -38,9 +38,9 @@ In an ideal world, our model would be able to exactly regenerate the underlying 
 
 The idea with rounding bias is that some anglers will round their counts to the nearest 5 or 10 digits. What does the signal for this look like?
 
--   First, the number of encounters for 5, 10, and 15 fish would be higher than expect.
--   Second, since those rounded fish_counts are being "removed" from their rightful places, the other values should be below what we expected
--   Third, since rounding is not changing the total number of fish, then if we bin our data into "rounding categories" of 3-7, 8-12, 13-17, etc, the total number of fish in those categories should match our expectations.
+- First, the number of encounters for 5, 10, and 15 fish would be higher than expect.
+- Second, since those rounded fish_counts are being "removed" from their rightful places, the other values should be below what we expected
+- Third, since rounding is not changing the total number of fish, then if we bin our data into "rounding categories" of 3-7, 8-12, 13-17, etc, the total number of fish in those categories should match our expectations.
 
 ```{r generating rounding error}
 dat.rounded = dat.true
@@ -147,8 +147,8 @@ The idea with prestige bias is that anglers who do not catch anything may be tem
 
 Since we don't know what numbers people will make up for their catch, we can't know *exactly* what patterns we should expect to see, but the general fingerprint for prestige bias will be that:
 
--   the catches of anglers reporting 1 or more kept fish to be around our expectations
--   the catches for anglers reporting no kept fish will have fewer 0s and more non-zeros than we expect
+- the catches of anglers reporting 1 or more kept fish to be around our expectations
+- the catches for anglers reporting no kept fish will have fewer 0s and more non-zeros than we expect
 
 For simplicity, we will assume that 1/2 of the AD marked fish are kept. And we'll assume the prestige liars randomly reported between 1 and 5 encounters of unmarked fish. If they were to consistently report a large number (e.g. tending to say "sure, I don't have anything to show for it, but I definitely caught 5 unmarked fish"), the pattern would look different, but we would still expect to see the discrepency between expectations only showing up for anglers with no kept fish.
 
@@ -235,7 +235,6 @@ dat.mis = dat.mis |>
   select(-freq.new)
 
 ```
-
 
 ```{r plotting misidentification}
 dat.join = bind_rows(dat.mis |> mutate(type = "observed"), 

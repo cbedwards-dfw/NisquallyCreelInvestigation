@@ -1,0 +1,8 @@
+fish.type,effort.type,smooth.type,interview.re,error,method,runtime,AIC
+fin_mark * life_stage,boat_used + angler_minutes,across doy by mark_stage,FALSE,nb,gam,18.4572350978851,11773.749164288194
+fin_mark * life_stage,boat_used * angler_minutes,across doy by mark_stage,FALSE,nb,gam,19.1914451122284,11752.183640950218
+fin_mark * life_stage,boat_used + angler_minutes,across doy by fin_mark,FALSE,nb,gam,7.06647896766663,11788.475949729114
+fin_mark,boat_used + angler_minutes,across doy by fin_mark,FALSE,nb,gam,7.3100278377533,12561.251490393108
+within smooth,boat_used + angler_minutes,"te of doy, mark_stage, yearfac",FALSE,nb,gam,13.6315319538116,11536.436607981987
+within smooth,boat_used:angler_minutes,"te of doy, mark_stage, yearfac",FALSE,nb,gam,22.4702661037445,11632.743363841219
+within smooth,boat_used*angler_minutes,"te of doy, mark_stage, yearfac",FALSE,nb,gam,14.4091689586639,11508.208027570761

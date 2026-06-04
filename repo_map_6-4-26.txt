@@ -1,0 +1,170 @@
+Nisqually Creel Investigation Repo Review
+
+(Collin doing archeology on 6/4/2026 to make sure he knows what lives where)
+
+apps/ 
+	test fishing location app.R	
+		Rshiny application that provides a map to assist in filtering test fishing data.
+		Relies on `cleaned_data/test-fishing-catch.csv`. Potentially could be a useful stand-alone product if we could link to automatically updated test fishing source.
+cleaned_data/
+	Contains a collection of csvs with unclear provinence. Probably generated in scripts within this repo.
+	creel_estimates/
+		more csvs, "model_estimates_.*". I think these came directly from Evan's estimation work.
+	key_dataframes/
+		more csvs, I think they mostly came from parsing things in original_data/, but not sure. 
+
+figures/ 
+	catch-model-results/
+		collection of figures created during my analyses, probably will find their generations in scripts. Without metadata, it's hard to have exact context. 
+	weekly_MR_.*
+
+fitted_models/
+	RDS and csv saving of model results or model summaries. Generated (and used?) in scripts elsewhere.
+	
+original_data/
+	Net data from Craig Smith. As I recall, there were some nuances in interpretting this data. We should have notes somewhere.
+	
+results/simulations
+	results from some simulations for the clumpiness analysis (see below)
+	
+results/quarto_output/scripts/
+	home to our compiled quarto documents
+	
+	distribution explainer.html
+		Explainer on our method of modeling the distributions of expected fish. The process is a little brain-twisty, which is why I wrote up the method. Does NOT attempt to apply this to the data.
+		
+	Methods outline.html
+		(most recent document here)
+		Project summary, skeleton for work. Probably a good doc to use as a starting point for our report document. 
+		Might be a little informal in language
+		Does *not* contain the results or specifics of any analyses.
+	
+	catch-model-v2.html
+		One of my attempts to actually model catch. Compares gam and ZINF models. Unclear from the html what the model structure was. I think this *might* be the most recent modeling attempt? ALthough I'm not seeing any of my time-of-day analyses.
+		This would probably be a decent template to update with any model changes and re-run. Includes looking at several forms of bias, including rounding and prestige bias.
+		UPDATE: This is not the most up to date we have. I should compile catch-model-v4.qmd in the scripts folder.
+	
+		
+		Analysis to confirm that we weren't going to run into an issue of spatio-temporal autocorrelation in marked vs unmarked fish. 
+		This material is written a little ifnormally, but the content should be an appendix in our report.
+	
+	catch-model.html 
+		Model of catch, this was superseeded by catch-model-v2.html. 
+	
+	expected-bias-fingerprints.html	
+		Document using toy models to set up our expectations for what different forms of bias would look like. Has examples for rounding bias, prestige bias, misidentification. 
+		This was primarily meant for comanager context-building, but we could potentially include some of this in the report? I think it will help to build intuitions for what our results would look like under different circumstances.
+
+
+		
+
+scripts/
+	---------------------
+	[from scripts-readme.txt]
+		prepare_creel_data.R pulls creel data and saves chinook data into cleaned_data/key_dataframes
+		prepare_creel_data_pinks.R does similar but for pink data.
+
+		catch-model-v3.qmd is the current workhorse for exploring models predicting encounters
+			[NEW UPDATE: actually v4.qmd is the workhorse]
+
+		catch-model-fitting.R runs and saves a series of models as in catch-model-v3, created because the models with a random effect of interview took multiple hours
+		catch-model-evaulations reads in those saved models, and was intended for model diagnostics. Early stages as of 7/17/25
+
+		pink-vs-chinook-v3 models chinook and pink phenology. This is in the process of being updated with our new data and new analysis methods. 
+	----------------------
+	
+	catch-model-adults-justification.qmd
+		This document was intended to explain our model choice. It was last run 8/12/25, so is one of hte most recent documents we have. It appears to have some incomplete sections.
+		This file is failing to compile. 
+	
+	catch-model-evalution.RDS
+		Script stub. Uses fitted_models/ to look at the various saved fitted models (in theory) but is only looking at model 14 currently.
+		Note: just loading the models is VERY slow. That might be because the fitted model RDS file is 11 gigs :(
+	
+	catch-model-fitting.R
+		fits a series of models and saves them to `fitted_models/fitted_models_gamonly.RDS`, 
+		"fitted_models/fitted_models_ongoing.RDS"
+		fitted_models/fitted_models_all.RDS
+		This was done because the model-fitting process was very time consuming and I wanted to reduce the amount of time spent in the process. However, the size of the resulting files suggests I should either do some optimizing in the script (are we creating multiple duplicates of the same data?) or save each model in its own RDS (so that at least we can load individual models without things exploding)
+	
+	catch-model-v4.qmd
+		most up-to-date model analyses, I think. Needs compiling. 
+	
+	clumpiness tendencies in test fishing data.qmd 
+		qmd file to create the associated html. This will likely be used for an appendix.
+		
+	confidence interval methods.qmd
+		Exploration of methods for calculating confidence intervals. It isn't saving stuff anywhere, so I think this was just for my learning purposes.
+		This probably will not be used anywhere elsewhere
+	
+	count-to-rate-methods-simulations.R
+		simulations to check if I had a mistake in my model specifications. I did.
+		This probably doesn't need to be used anywere else.
+		
+	creel_mark_rate_comparison.qmd
+		Looking at boat vs bank mark rate across years.
+		Looks like there hav ebeen updates in some amount of data structure that's causing errors late in the script. 
+		I suspect Evan has more updated versions of this file. 
+		
+	distribution_explainer.qmd	
+		source file for the corresponding html. I think we'll end up using material from this in the appendix.
+		
+	fishery_methods_descriptive_stats.qmd
+		preliminary exploration of creel descriptive stats. Last updated Jan 2025.
+	
+	gam doy plotting package prototype.R
+		prototype for VisSeasonalGams package. Should not be needed anymore (but make sure no scripts are sourcing it).
+	
+	methods-description.qmd
+		source for the correspoding html, which I expect we will use as a skeleton for the report.
+	
+	mr-model-fitting.R
+		last worked on in July 2025
+		appears to be some exploration of model options, including modeling mark RATE as a gam model. 
+		Unclear if this is something we want to add to future analyses. Understanding expected markrate is interesting, but loses some information relative to actual numbers of fish.
+		
+	net phenology modeling
+		last worked on Jan 2025
+		prelimiary modeling of net data to look at seasonality. I believe I realized that most of the phenological patterns were being driven by fishing reg decisions rather than interesting fish phenology. But I could be wrong. 
+		I don't think this is something that we will want to pursue further.
+	
+	nisqually-mouth-MR-work.R
+		last worked on Jun 2025
+		Preliminary filtering of CWT reports from near the Nisqually. The idea was to see if we could create a reference markrate based on these fish. 
+		I think we could include this in our list of rabbitholes that didn't lead anywhere. We only had 39 CWTs near the nisqually in the three years of interest - 10 in 2021, 10 in 2022, 19 in 2023. 
+	
+	pink-vs-chinook-v3.qmd
+		last worked on July 2025
+		Need to try compiling. Looks like it's comparing the phenology of reported Pinks against the phenology of reported chinooks, and if I recall maybe compares that to the markrates that drew concern initially. 
+		Errors in compile attempt!
+	
+	Preliminary-catch-model.R
+		Last touched Feb 2025
+		I think this is superceded by catch-model-v4.qmd. As I recall this model has some issues with model specification (which I tested with my `count-to-rate-methods-simulation.R`). 
+		Archiving this.
+	
+	prepare_creel_data_pinks.R
+		see below
+	prepare_creel_data.R
+		Last used summer 2025. Integrates the creel interview data into easy-to-use forms, saved in key_dataframes/.
+		Also pulls in and intgrates the BSS data loadings from Evan's files and saves as bss_combined.csv.
+	
+	probability_calculator_sandbox.R
+		experimenting with functions to calculate probabilities. I *think* these functions have been integrated into more permanent places in this project. 
+		Script does not run on its own, as it relies on `dat.new` object. Probably wrote this when partway through working on another script. 
+		I should make sure I understand what this is and see if we're using the ideas elsewhere, then archive.
+		
+	study_area_maps.qmd
+		I think this might be an Evan doc? Not finished, but designed to show the study area in R-generated maps. 
+		
+	theroetical_filtering_effect_simulation.R
+		last worked on Jan 2026. 
+		Toy simulations to look at how filtering of MSF fishery could affect the mark rates. 
+		Preliminary, not final. Probably not worth pursuing further.
+	
+	time-to-catch-benchmarking.R
+		Last worked on Jun 11
+		Goal was to look at how long it took for test fishers to catch fish. Thought that could help put bounds on how many fish anglers could be catching. 
+		
+		archive/
+			I've moved any scripts that are obviously outdated here. That is primarily earlier iterations of scripts we have in the main folder (e.g., catch-model, catch-model-v2, catch-model-v3), and one script that states in the header that it's no longer in use.

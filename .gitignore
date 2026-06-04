@@ -3,4 +3,9 @@
 .RData
 .Ruserdata
 
+*.RDS
+
 /.quarto/
+.positai
+
+**/*.quarto_ipynb
